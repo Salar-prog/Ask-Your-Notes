@@ -74,6 +74,10 @@ No network and no API key are needed for the gate.
 - **Figures only.** The gate checks numbers. The model can still invent a name
   or a relationship that has no number in it. Do not treat this as full
   fact-checking.
+- **Literal figures.** A correct figure rewritten in another form
+  (`$2.3B` → `2,300,000,000`) is rejected, because the gate compares numeric
+  values, not units or formatting. The prompt asks the model to copy figures
+  exactly.
 - **Keyword retrieval.** `localAnswer()` scores sentences by word overlap. It is
   good for direct questions about a sentence, and weak for multi-hop questions
   ("who reported the figure the CFO mentioned?").
@@ -85,3 +89,6 @@ No network and no API key are needed for the gate.
   in the question. It is not a web search and it does not fetch arbitrary URLs.
 - **No layout QA.** The verifier proves the script runs and the logic holds; it
   does not prove the page looks right in a browser.
+
+`harness.mjs`, `serve.mjs`, and the starting structure come from the
+MIT-licensed template in `../template/`.
