@@ -60,11 +60,18 @@ createServer(async (req, res) => {
         },
         body: await readBody(req)
       });
+      const text = await upstream.text();
+      if (!upstream.ok) {
+        // The browser hides a 403 body behind the Network tab; the terminal is
+        // the fast place to read UnoRouter's error code and message.
+        console.error("upstream " + upstream.status + " " + upstream.statusText);
+        console.error(text.slice(0, 1200));
+      }
       res.writeHead(upstream.status, {
         "Content-Type": "application/json",
         "Access-Control-Allow-Origin": "*"
       });
-      return res.end(await upstream.text());
+      return res.end(text);
     } catch (e) {
       return send(res, 502, "upstream failed: " + e.message);
     }

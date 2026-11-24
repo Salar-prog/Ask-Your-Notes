@@ -33,6 +33,35 @@ curl https://api.unorouter.com/v1/models \
   -H "Authorization: Bearer $UNOROUTER_API_KEY"
 ```
 
+## Troubleshooting
+
+**Open `http://localhost:8080`, not the `index.html` file.** A page opened as
+`file://` cannot call the proxy, and Firefox logs a `file:///` security error.
+
+**A `403` from `/proxy/chat/completions` is UnoRouter's status, not the local
+server's.** Restart `serve.mjs` after updating it and read the terminal; the
+proxy now prints the upstream body. The usual causes:
+
+- The key is the account **access token** from Settings, not the **API key**
+  from the Tokens page. API keys start with `sk-`; access tokens are 29–32
+  characters and cannot send completions.
+- The model is not allowed for that key. `GET /v1/models` lists exactly what it
+  can use.
+- The model is not free. Its name must end in `:free`, or the key needs balance.
+- The key has an IP allowlist that does not include the machine running
+  `serve.mjs`.
+
+Check the key directly:
+
+```bash
+curl https://api.unorouter.com/v1/models \
+  -H "Authorization: Bearer $UNOROUTER_API_KEY"
+```
+
+`401` means missing/invalid/expired key; `403` means the key is valid but not
+allowed to do this; `429` means wait for `Retry-After`; `503` with
+`get_channel_failed` means the free providers are busy.
+
 ## What it does
 
 1. Save a note (date-stamped, free text). Notes live in this browser under
