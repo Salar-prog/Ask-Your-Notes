@@ -1,0 +1,10 @@
+# Throwaway databases (failover-style projects keep one here)
+.db/
+
+# Node
+node_modules/
+*.log
+.env
+
+# OS
+.DS_Store

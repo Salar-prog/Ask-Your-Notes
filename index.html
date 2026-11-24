@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Notes Q&amp;A</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:#f4f2ed;color:#1d1f22;
+    font:400 14px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif;
+    padding:clamp(20px,5vw,56px) clamp(16px,4vw,40px);
+    -webkit-font-smoothing:antialiased;
+  }
+  main{max-width:1060px;margin:0 auto}
+  .eyebrow{font:600 9px/1 ui-monospace,"SF Mono",Menlo,monospace;letter-spacing:.28em;
+    text-transform:uppercase;color:#9a948a;margin:0 0 10px}
+  h1{margin:0 0 10px;font:800 clamp(26px,4vw,40px)/1.02 system-ui,sans-serif;letter-spacing:-.035em}
+  #claim{margin:0 0 26px;font-size:15px;color:#4a4d52;border-left:2px solid #c9c2b6;padding-left:12px;max-width:72ch}
+  h2{font:700 11px/1 ui-monospace,monospace;letter-spacing:.18em;text-transform:uppercase;
+    color:#6d6a63;margin:0 0 12px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  @media (max-width:760px){.grid{grid-template-columns:1fr}}
+  .panel{background:#fbfaf7;border:1px solid #ded8cd;border-radius:3px;padding:16px}
+  textarea,input[type=text],input[type=password]{
+    width:100%;font:inherit;color:inherit;background:#fff;border:1px solid #c9c2b6;
+    border-radius:2px;padding:9px 10px;outline:none
+  }
+  textarea{min-height:108px;resize:vertical}
+  input:focus,textarea:focus{border-color:#1d1f22;box-shadow:0 0 0 1px #1d1f22}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{font:600 10px/1 ui-monospace,monospace;letter-spacing:.14em;text-transform:uppercase;
+    padding:10px 13px;border:1px solid #1d1f22;background:#1d1f22;color:#fbfaf7;
+    border-radius:2px;cursor:pointer}
+  button:hover{background:#37383b}
+  button:disabled{opacity:.45;cursor:wait}
+  button.ghost{background:transparent;color:#3c3f44;border-color:#c9c2b6}
+  button.ghost:hover{background:#f0ece4}
+  button:focus-visible{outline:2px solid #1d1f22;outline-offset:2px}
+  .notes{margin-top:14px;display:flex;flex-direction:column;gap:10px;max-height:280px;overflow:auto}
+  .note{border-top:1px solid #e4dfd5;padding-top:10px}
+  .note:first-child{border-top:0;padding-top:0}
+  .note time{display:block;font:600 9px/1 ui-monospace,monospace;letter-spacing:.08em;
+    text-transform:uppercase;color:#9a948a;margin-bottom:4px}
+  .note p{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
+  .answer{min-height:76px;margin-top:14px;padding:12px;background:#fff;border:1px solid #ded8cd;
+    border-left:3px solid #9a948a;border-radius:2px;white-space:pre-wrap;overflow-wrap:anywhere}
+  .answer.api{border-left-color:#2f6f5e}
+  .answer.local{border-left-color:#8a6d3b}
+  .answer.warn{border-left-color:#a33a2b;background:#fdf6f4}
+  .meta{margin:6px 0 0;font:400 10px/1.5 ui-monospace,monospace;color:#8a857b;overflow-wrap:anywhere}
+  .toggle{display:flex;align-items:center;gap:6px;font:400 10px/1 ui-monospace,monospace;
+    letter-spacing:.06em;text-transform:uppercase;color:#6d6a63}
+  .config{margin-top:18px;border-top:1px solid #ded8cd;padding-top:14px}
+  .config summary{font:600 10px/1 ui-monospace,monospace;letter-spacing:.14em;
+    text-transform:uppercase;cursor:pointer;color:#4a4d52}
+  .config p{font-size:12px;color:#6d6a63;max-width:78ch}
+  .config label{display:block;margin-top:10px;font:400 11px/1.4 ui-monospace,monospace;color:#6d6a63}
+  .config input{margin-top:5px}
+  code{font:400 11px/1.4 ui-monospace,monospace;background:#ece8df;padding:1px 4px;border-radius:2px}
+  footer{margin-top:28px;font:400 10px/1.7 ui-monospace,monospace;color:#9a948a;max-width:78ch}
+</style>
+</head>
+<body>
+<main>
+  <p class="eyebrow">meeting notes / grounded answers</p>
+  <h1>Ask your notes.</h1>
+  <p id="claim">The answer may use the model, but every figure it cites must already exist in a saved note or a fetched live fact. Invented figures are replaced.</p>
+
+  <div class="grid">
+    <section class="panel">
+      <h2>Notes</h2>
+      <textarea id="note-input" placeholder="Paste meeting notes, a decision, a call summary…"></textarea>
+      <div class="row">
+        <button id="save-note">Save note</button>
+        <button id="clear-notes" class="ghost">Clear all</button>
+      </div>
+      <div id="notes" class="notes"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Ask</h2>
+      <input id="question" type="text" placeholder="What did Acme report in Q3?" autocomplete="off">
+      <div class="row">
+        <button id="ask">Ask</button>
+        <label class="toggle"><input type="checkbox" id="live-enabled"> live Wikipedia fact</label>
+      </div>
+      <div id="answer" class="answer" aria-live="polite">Ask a question about the notes.</div>
+      <p id="answer-meta" class="meta"></p>
+      <p id="answer-note" class="meta"></p>
+      <p id="live-fact" class="meta"></p>
+    </section>
+  </div>
+
+  <details class="config">
+    <summary>UnoRouter config</summary>
+    <p>
+      The key stays in this browser and is sent only to the local proxy. Run
+      <code>UPSTREAM=https://api.unorouter.com/v1 node serve.mjs</code>, open
+      <code>http://localhost:8080</code>, then ask. No key? The local reader answers from the notes.
+    </p>
+    <label>Base URL <input id="cfg-base" type="text" autocomplete="off" spellcheck="false"></label>
+    <label>Model <input id="cfg-model" type="text" autocomplete="off" spellcheck="false"></label>
+    <label>API key <input id="cfg-key" type="password" autocomplete="off"></label>
+    <div class="row">
+      <button id="cfg-save" class="ghost">Save config</button>
+      <span id="status" class="meta"></span>
+    </div>
+  </details>
+
+  <footer>
+    Free models allow about one request per minute. The local reader works with no key, so the page
+    never depends on the API to answer. Grounding checks figures only; names and dates are the
+    model's job.
+  </footer>
+</main>
+
+<script>
+(() => {
+  "use strict";
+
+  const NOTES_KEY = "notes-qa.notes.v1";
+  const CFG_KEY = "notes-qa.cfg.v1";
+  const LIVE_KEY = "notes-qa.live.v1";
+  const DEFAULT_CFG = { baseUrl: "http://localhost:8080/proxy", model: "gpt-oss-120b:free", key: "" };
+  const SEED = "Acme Corp reported $2.3B revenue in Q3 2025, up 18% year over year. Their CFO said the renewal pipeline is strong. We agreed to send the security questionnaire by Friday.";
+
+  const STOP = new Set(("a an and are as at be been but by can could did do does for from had has have how i if in into is it its me my of on or our should so than that the their them then there these they this those to up was we were what when where which who why will with would you your").split(" "));
+  const ENTITY_STOP = new Set(("what when where why how which did does is are was were the a an in on at for of to and but i my we our you your it this that these those tell about latest current").split(" "));
+
+  const el = id => document.getElementById(id);
+
+  function loadNotes() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(NOTES_KEY) || "[]");
+      return Array.isArray(raw) ? raw.filter(n => n && typeof n.text === "string") : [];
+    } catch { return []; }
+  }
+
+  let notes = loadNotes();
+
+  function saveNotes() { localStorage.setItem(NOTES_KEY, JSON.stringify(notes)); }
+
+  function addNote(text) {
+    const clean = String(text || "").trim();
+    if (!clean) return null;
+    const note = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      createdAt: new Date().toISOString(),
+      text: clean
+    };
+    notes.push(note);
+    saveNotes();
+    return note;
+  }
+
+  function clearNotes() { notes = []; saveNotes(); }
+  function seed() { if (!notes.length) addNote(SEED); }
+  seed();
+
+  function loadCfg() {
+    try { return Object.assign({}, DEFAULT_CFG, JSON.parse(localStorage.getItem(CFG_KEY) || "{}")); }
+    catch { return Object.assign({}, DEFAULT_CFG); }
+  }
+
+  let cfg = loadCfg();
+  let liveEnabled = localStorage.getItem(LIVE_KEY) !== "0";
+
+  // ---------------------------------------------------------------- text
+
+  const tokens = s => String(s).toLowerCase().match(/[a-z0-9$%.]+/g) || [];
+  const contentTokens = s => tokens(s).filter(t => !STOP.has(t));
+
+  function sentencesOf(text) {
+    return String(text).split(/(?<=[.!?])\s+|\n+/).map(s => s.trim()).filter(Boolean);
+  }
+
+  function localAnswer(list, question) {
+    const q = contentTokens(question);
+    if (!q.length) return { text: "Ask a question about your notes.", sentence: null, note: null };
+    let best = null;
+    for (const note of list) {
+      for (const sentence of sentencesOf(note.text)) {
+        const words = new Set(tokens(sentence));
+        let score = 0;
+        for (const t of q) if (words.has(t)) score++;
+        if (!best || score > best.score) best = { score, sentence, note };
+      }
+    }
+    if (!best || best.score === 0) return { text: "Not in your notes.", sentence: null, note: null };
+    return { text: "From your notes: " + best.sentence, sentence: best.sentence, note: best.note };
+  }
+
+  function numbersIn(text) {
+    const found = String(text).match(/\d[\d,]*(?:\.\d+)?/g) || [];
+    return found.map(x => Number(x.replace(/,/g, ""))).filter(Number.isFinite);
+  }
+
+  function unsupportedNumbers(answer, sources) {
+    const allowed = new Set(numbersIn(sources));
+    return [...new Set(numbersIn(answer))].filter(n => !allowed.has(n));
+  }
+
+  function extractEntity(question) {
+    const matches = String(question).match(/\b[A-Z][A-Za-z0-9&.'-]*(?:\s+[A-Z][A-Za-z0-9&.'-]*)*/g) || [];
+    for (const raw of matches) {
+      const cleaned = raw.replace(/'s$/i, "");
+      const words = cleaned.split(/\s+/).filter(w => w && !ENTITY_STOP.has(w.toLowerCase()));
+      const candidate = words.join(" ").trim();
+      if (candidate.length > 1) return candidate;
+    }
+    return "";
+  }
+
+  function notesText(list) {
+    return list.map(n => "[" + new Date(n.createdAt).toISOString().slice(0, 10) + "] " + n.text).join("\n");
+  }
+
+  function buildMessages(list, question, liveText) {
+    return [
+      {
+        role: "system",
+        content:
+          "You answer questions about the user's saved meeting notes. Use ONLY the NOTES and LIVE FACT below. " +
+          "Copy every figure exactly as written. Never invent a number, date, or name. " +
+          "If the answer is not present, say exactly: Not in your notes. Reply in one or two plain sentences."
+      },
+      {
+        role: "user",
+        content:
+          "NOTES:\n" + (notesText(list) || "(none)") +
+          "\n\nLIVE FACT (optional):\n" + (liveText || "(none)") +
+          "\n\nQUESTION:\n" + question
+      }
+    ];
+  }
+
+  // ---------------------------------------------------------------- live + model
+
+  async function lookupLive(question, fetchImpl = fetch) {
+    const entity = extractEntity(question);
+    if (!entity) return null;
+    const url = "https://en.wikipedia.org/api/rest_v1/page/summary/" + encodeURIComponent(entity);
+    try {
+      const res = await fetchImpl(url, { headers: { Accept: "application/json" } });
+      if (!res || !res.ok) return null;
+      const data = await res.json();
+      if (!data || !data.extract) return null;
+      return {
+        title: data.title || entity,
+        extract: data.extract,
+        url: data.content_urls && data.content_urls.desktop ? data.content_urls.desktop.page : url
+      };
+    } catch { return null; }
+  }
+
+  async function askModel(list, question, liveText, config, fetchImpl) {
+    const t0 = Date.now();
+    const base = String(config.baseUrl || "").replace(/\/+$/, "");
+    const res = await fetchImpl(base + "/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(config.key ? { Authorization: "Bearer " + config.key } : {})
+      },
+      body: JSON.stringify({
+        model: config.model,
+        temperature: 0.2,
+        max_tokens: 220,
+        messages: buildMessages(list, question, liveText)
+      })
+    });
+    if (!res || !res.ok) throw new Error("HTTP " + (res ? res.status : "no response"));
+    const payload = await res.json();
+    const text = payload && payload.choices && payload.choices[0] && payload.choices[0].message
+      ? String(payload.choices[0].message.content || "").trim()
+      : "";
+    if (!text) throw new Error("empty response");
+    return { text, ms: Date.now() - t0 };
+  }
+
+  async function answerQuestion(question, config = cfg, opts = {}) {
+    const q = String(question || "").trim();
+    const fetchImpl = opts.fetchImpl || fetch;
+    const live = opts.live === undefined ? liveEnabled : opts.live;
+    const local = localAnswer(notes, q);
+    if (!q) {
+      return { text: "Ask a question first.", source: "local", grounded: true, replaced: false,
+        live: null, sentence: null, note: null, ms: 0 };
+    }
+
+    let liveFact = null;
+    if (live && config && config.key) liveFact = await lookupLive(q, fetchImpl);
+    const liveText = liveFact ? liveFact.title + ": " + liveFact.extract : "";
+
+    if (!config || !config.baseUrl || !config.model || !config.key) {
+      return { text: local.text, source: "local", grounded: true, replaced: false,
+        live: liveFact, sentence: local.sentence, note: local.note, ms: 0 };
+    }
+
+    try {
+      const out = await askModel(notes, q, liveText, config, fetchImpl);
+      const bad = unsupportedNumbers(out.text, notesText(notes) + "\n" + liveText);
+      if (bad.length) {
+        return { text: local.text, source: "local", grounded: false, replaced: true, bad,
+          raw: out.text, live: liveFact, sentence: local.sentence, note: local.note, ms: out.ms };
+      }
+      return { text: out.text, source: "api", grounded: true, replaced: false,
+        live: liveFact, sentence: local.sentence, note: local.note, ms: out.ms };
+    } catch (e) {
+      return { text: local.text, source: "local", grounded: true, replaced: false,
+        live: liveFact, sentence: local.sentence, note: local.note, error: e.message, ms: 0 };
+    }
+  }
+
+  // ---------------------------------------------------------------- UI
+
+  function renderNotes() {
+    const host = el("notes");
+    host.innerHTML = "";
+    if (!notes.length) { host.textContent = "No notes yet."; return; }
+    for (const n of notes) {
+      const row = document.createElement("article");
+      row.className = "note";
+      const time = document.createElement("time");
+      time.textContent = new Date(n.createdAt).toLocaleString();
+      const p = document.createElement("p");
+      p.textContent = n.text;
+      row.appendChild(time);
+      row.appendChild(p);
+      host.appendChild(row);
+    }
+  }
+
+  function renderAnswer(res) {
+    el("answer").textContent = res.text;
+    el("answer").className = "answer " + (res.source === "api" ? "api" : "local") + (res.grounded ? "" : " warn");
+
+    const bits = [res.source === "api" ? "UnoRouter" : "local reader"];
+    bits.push(res.grounded ? "figures grounded" : "unsupported figure blocked");
+    if (res.ms) bits.push(res.ms + " ms");
+    if (res.error) bits.push("fallback: " + res.error);
+    el("answer-meta").textContent = bits.join(" · ");
+
+    el("answer-note").textContent = res.sentence ? "Nearest note: " + res.sentence : "";
+    el("live-fact").textContent = res.live
+      ? "Live fact (" + res.live.title + "): " + res.live.extract
+      : "";
+  }
+
+  function readCfgFields() {
+    return {
+      baseUrl: el("cfg-base").value.trim() || DEFAULT_CFG.baseUrl,
+      model: el("cfg-model").value.trim(),
+      key: el("cfg-key").value
+    };
+  }
+
+  function renderCfg() {
+    el("cfg-base").value = cfg.baseUrl || DEFAULT_CFG.baseUrl;
+    el("cfg-model").value = cfg.model || "";
+    el("cfg-key").value = cfg.key || "";
+    el("live-enabled").checked = liveEnabled;
+  }
+
+  el("save-note").addEventListener("click", () => {
+    const note = addNote(el("note-input").value);
+    if (!note) return;
+    el("note-input").value = "";
+    renderNotes();
+  });
+
+  el("clear-notes").addEventListener("click", () => {
+    if (!confirm("Delete every note from this browser?")) return;
+    clearNotes();
+    renderNotes();
+  });
+
+  el("cfg-save").addEventListener("click", () => {
+    cfg = readCfgFields();
+    localStorage.setItem(CFG_KEY, JSON.stringify(cfg));
+    liveEnabled = el("live-enabled").checked;
+    localStorage.setItem(LIVE_KEY, liveEnabled ? "1" : "0");
+    el("status").textContent = "Saved.";
+  });
+
+  el("live-enabled").addEventListener("change", () => {
+    liveEnabled = el("live-enabled").checked;
+    localStorage.setItem(LIVE_KEY, liveEnabled ? "1" : "0");
+  });
+
+  el("ask").addEventListener("click", async () => {
+    const q = el("question").value.trim();
+    if (!q) { el("answer").textContent = "Type a question first."; return; }
+    el("ask").disabled = true;
+    el("answer-meta").textContent = "asking…";
+    try {
+      const res = await answerQuestion(q, readCfgFields(), { live: el("live-enabled").checked });
+      renderAnswer(res);
+    } finally {
+      el("ask").disabled = false;
+    }
+  });
+
+  renderCfg();
+  renderNotes();
+
+  // The hook verify.mjs uses. Keep it.
+  window.__app = {
+    NOTES_KEY, CFG_KEY,
+    addNote, clearNotes, getNotes: () => notes.map(n => ({ ...n })),
+    answerQuestion, buildMessages, localAnswer, unsupportedNumbers, extractEntity, lookupLive,
+    getNotesText: () => notesText(notes)
+  };
+})();
+</script>
+</body>
+</html>
