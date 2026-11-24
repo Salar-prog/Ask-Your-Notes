@@ -66,16 +66,25 @@ allowed to do this; `429` means wait for `Retry-After`; `503` with
 
 1. Save a note (date-stamped, free text). Notes live in this browser under
    `notes-qa.notes.v1`.
-2. Ask a question. The page picks the best-matching note sentence for the local
-   reader, extracts a capitalised entity for the optional Wikipedia lookup, and
-   sends the **whole notes list** plus the question to the model.
-3. The answer is displayed with its source:
+2. Ask a question. `retrieve()` ranks the note sentences by how many of the
+   question's content words they carry and keeps the top 5. Those sentences —
+   not every note — go to the model, together with the question. The same
+   sentences are the local reader's evidence, so the two paths see the same
+   notes. A capitalised entity in the question is fetched from Wikipedia first.
+3. If the best sentence matches less than half of the question's content words,
+   the page answers `Not in your notes` instead of guessing. With no evidence
+   and no live fact, it does not spend a model request at all.
+4. If the evidence takes two sides of a contrast the question asks about (for
+   example "do I like X or Y" where the note likes X and dislikes Y), both
+   sentences are returned. If the model reports only one side anyway, the answer
+   is shown with a `one side only` warning.
+5. The answer is displayed with its source:
    - `UnoRouter` — the model answered.
    - `local reader` — no key, an API error, or a blocked figure.
    - `unsupported figure blocked` — the model cited a number absent from the
      notes/live fact, so its answer was replaced.
-4. Every answer shows the nearest note sentence and the live fact, if one was
-   fetched.
+6. Every answer shows how many notes were read, the evidence sentences, and the
+   live fact, if one was fetched.
 
 The prompt restricts the model to the notes and the live fact, but the prompt
 is not the guarantee. The guarantee is the number gate: `unsupportedNumbers()`
@@ -91,10 +100,14 @@ The gate boots the real page script under `harness.mjs`, mocks both the
 Wikipedia call and the chat call, and checks:
 
 - the local reader returns the note's `$2.3B`;
-- the prompt contains the notes and question, and never the API key;
+- the prompt carries the matching sentence, not an unrelated note, and never
+  the API key;
 - `$9.9B` is rejected and replaced with `$2.3B`;
 - a grounded `$2.3B` answer passes;
-- a number that exists only in the fetched live fact is allowed.
+- a number that exists only in the fetched live fact is allowed;
+- a two-sided note answers with both sides;
+- an unrelated question abstains without calling the model;
+- a one-sided model answer to a contrast question is flagged.
 
 No network and no API key are needed for the gate.
 
@@ -107,9 +120,18 @@ No network and no API key are needed for the gate.
   (`$2.3B` → `2,300,000,000`) is rejected, because the gate compares numeric
   values, not units or formatting. The prompt asks the model to copy figures
   exactly.
-- **Keyword retrieval.** `localAnswer()` scores sentences by word overlap. It is
-  good for direct questions about a sentence, and weak for multi-hop questions
-  ("who reported the figure the CFO mentioned?").
+- **Keyword retrieval.** `retrieve()` scores sentences by word overlap — no
+  stemming, embeddings, or synonyms. A question phrased with different words
+  from the note will abstain (`Not in your notes`) even when the answer is
+  there. Good for direct questions, weak for multi-hop ("who reported the figure
+  the CFO mentioned?").
+- **Half-match threshold.** A sentence must share at least half of the
+  question's content words. That is what makes abstention possible, but it is a
+  blunt cut: a long question about a short sentence can miss.
+- **Two-sided detection is a small word list.** `like`/`dislike`,
+  `agree`/`disagree`, and a few synonyms. "I prefer X" vs "X is fine" is not
+  detected as a contradiction; the note still answers, but the one-side warning
+  may not fire.
 - **One browser.** Notes are in `localStorage`; there is no account, server
   storage, or sync. Clearing site data clears the notes.
 - **The key is in the browser.** Fine for a local demo; for a shared deployment,

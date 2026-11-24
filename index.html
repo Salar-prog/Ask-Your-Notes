@@ -111,7 +111,9 @@
 
   <footer>
     Free models allow about one request per minute. The local reader works with no key, so the page
-    never depends on the API to answer. Grounding checks figures only; names are the model's job.
+    never depends on the API to answer. A sentence must match half the question to count as evidence,
+    and a two-sided note is answered with both sides. Grounding checks figures only; names are the
+    model's job.
   </footer>
 </main>
 
@@ -168,27 +170,69 @@
 
   // ---------------------------------------------------------------- text
 
-  const tokens = s => String(s).toLowerCase().match(/[a-z0-9$%.]+/g) || [];
-  const contentTokens = s => tokens(s).filter(t => !STOP.has(t));
+  const TOP = 5;        // sentences of evidence the model may see
+  const SUPPORT = 0.5;  // share of the question's content words a sentence must match
+  const NOT_FOUND = "Not in your notes.";
+
+  // "." is kept so "$2.3B" stays one token, but a sentence-final dot is not part
+  // of the word: "theme." must match "theme".
+  const tokens = s => (String(s).toLowerCase().match(/[a-z0-9$%.]+/g) || [])
+    .map(t => t.replace(/\.+$/, ""))
+    .filter(Boolean);
+  const contentTokens = s => [...new Set(tokens(s).filter(t => !STOP.has(t)))];
 
   function sentencesOf(text) {
     return String(text).split(/(?<=[.!?])\s+|\n+/).map(s => s.trim()).filter(Boolean);
   }
 
-  function localAnswer(list, question) {
+  // Rank note sentences by how many of the question's content words they carry.
+  // A sentence that shares no word is not evidence and is dropped entirely.
+  function retrieve(list, question, limit = TOP) {
     const q = contentTokens(question);
-    if (!q.length) return { text: "Ask a question about your notes.", sentence: null, note: null };
-    let best = null;
+    if (!q.length) return [];
+    const hits = [];
     for (const note of list) {
       for (const sentence of sentencesOf(note.text)) {
         const words = new Set(tokens(sentence));
-        let score = 0;
-        for (const t of q) if (words.has(t)) score++;
-        if (!best || score > best.score) best = { score, sentence, note };
+        const matched = q.filter(t => words.has(t));
+        if (matched.length) hits.push({ score: matched.length, matched, sentence, note });
       }
     }
-    if (!best || best.score === 0) return { text: "Not in your notes.", sentence: null, note: null };
-    return { text: "From your notes: " + best.sentence, sentence: best.sentence, note: best.note };
+    return hits.sort((a, b) => b.score - a.score).slice(0, limit);
+  }
+
+  function supported(hits, question) {
+    const q = contentTokens(question);
+    return !!(hits[0] && q.length && hits[0].matched.length / q.length >= SUPPORT);
+  }
+
+  // Which side a sentence takes. Small on purpose: it catches like/dislike and
+  // agree/disagree, not general sentiment.
+  const NEG = /\b(?:dislike|hate|don'?t like|do not like|not a fan|avoid|against|oppose|disagree|drop|remove|disable|never|no longer)\b/i;
+  const NEG_ALL = new RegExp(NEG.source, "gi");
+  const POS = /\b(?:like|love|prefer|agree|support|approve|keep|enable|want)\b/i;
+  const sides = text => {
+    const s = String(text);
+    // "don't like" is negative, so strip negated phrases before looking for "like".
+    return { neg: NEG.test(s), pos: POS.test(s.replace(NEG_ALL, " ")) };
+  };
+
+  function localAnswer(hits, question) {
+    const q = contentTokens(question);
+    if (!q.length) return { text: "Ask a question about your notes.", sentences: [], note: null };
+    if (!supported(hits, question)) return { text: NOT_FOUND, sentences: [], note: null };
+    const best = hits[0];
+    const bestSides = sides(best.sentence);
+    const chosen = [best];
+    for (const hit of hits.slice(1)) {
+      // Another sentence on the same topic that takes the other side. Return
+      // both, so the reader never silently picks one half of a contradiction.
+      if (hit.score * 2 < best.score) break;
+      const b = sides(hit.sentence);
+      if ((bestSides.neg && b.pos) || (bestSides.pos && b.neg)) chosen.push(hit);
+    }
+    const sentences = [...new Set(chosen.map(h => h.sentence))];
+    return { text: "From your notes: " + sentences.join(" "), sentences, note: best.note };
   }
 
   function numbersIn(text) {
@@ -216,19 +260,24 @@
     return list.map(n => "[" + new Date(n.createdAt).toISOString().slice(0, 10) + "] " + n.text).join("\n");
   }
 
-  function buildMessages(list, question, liveText) {
+  function evidenceText(hits) {
+    return hits.map(h => "[" + new Date(h.note.createdAt).toISOString().slice(0, 10) + "] " + h.sentence).join("\n");
+  }
+
+  function buildMessages(hits, question, liveText) {
     return [
       {
         role: "system",
         content:
           "You answer questions about the user's saved meeting notes. Use ONLY the NOTES and LIVE FACT below. " +
+          "When the notes take two sides, report both sides instead of choosing one. " +
           "Copy every figure exactly as written. Never invent a number, date, or name. " +
           "If the answer is not present, say exactly: Not in your notes. Reply in one or two plain sentences."
       },
       {
         role: "user",
         content:
-          "NOTES:\n" + (notesText(list) || "(none)") +
+          "NOTES:\n" + (evidenceText(hits) || "(none)") +
           "\n\nLIVE FACT (optional):\n" + (liveText || "(none)") +
           "\n\nQUESTION:\n" + question
       }
@@ -254,7 +303,7 @@
     } catch { return null; }
   }
 
-  async function askModel(list, question, liveText, config, fetchImpl) {
+  async function askModel(hits, question, liveText, config, fetchImpl) {
     const t0 = Date.now();
     const base = String(config.baseUrl || "").replace(/\/+$/, "");
     const res = await fetchImpl(base + "/chat/completions", {
@@ -267,7 +316,7 @@
         model: config.model,
         temperature: 0.2,
         max_tokens: 220,
-        messages: buildMessages(list, question, liveText)
+        messages: buildMessages(hits, question, liveText)
       })
     });
     if (!res || !res.ok) throw new Error("HTTP " + (res ? res.status : "no response"));
@@ -279,37 +328,56 @@
     return { text, ms: Date.now() - t0 };
   }
 
+  // True when the evidence holds both sides of a contrast the question asks
+  // about, but the answer reports only one. The answer is still shown; the UI
+  // says "one side only" so the gap is visible instead of silent.
+  function oneSided(answer, hits, question) {
+    if (!/\b(?:or|versus|vs|both|but)\b/i.test(question)) return false;
+    const evidence = sides(hits.map(h => h.sentence).join(" "));
+    if (!evidence.neg || !evidence.pos) return false;
+    const a = sides(answer);
+    return !(a.neg && a.pos);
+  }
+
   async function answerQuestion(question, config = cfg, opts = {}) {
     const q = String(question || "").trim();
     const fetchImpl = opts.fetchImpl || fetch;
     const live = opts.live === undefined ? liveEnabled : opts.live;
-    const local = localAnswer(notes, q);
     if (!q) {
       return { text: "Ask a question first.", source: "local", grounded: true, replaced: false,
-        live: null, sentence: null, note: null, ms: 0 };
+        incomplete: false, live: null, sentences: [], note: null, ms: 0,
+        hits: 0, notesRead: 0, notesTotal: notes.length };
     }
+
+    const hits = retrieve(notes, q);
+    const local = localAnswer(hits, q);
 
     let liveFact = null;
     if (live && config && config.key) liveFact = await lookupLive(q, fetchImpl);
     const liveText = liveFact ? liveFact.title + ": " + liveFact.extract : "";
 
+    const result = {
+      source: "local", grounded: true, replaced: false, incomplete: false,
+      live: liveFact, sentences: local.sentences, note: local.note, ms: 0,
+      hits: hits.length, notesRead: new Set(hits.map(h => h.note.id)).size, notesTotal: notes.length
+    };
+
+    // No matching note and no live fact: abstain without spending a request.
+    if (!hits.length && !liveFact) return { ...result, text: local.text };
+
     if (!config || !config.baseUrl || !config.model || !config.key) {
-      return { text: local.text, source: "local", grounded: true, replaced: false,
-        live: liveFact, sentence: local.sentence, note: local.note, ms: 0 };
+      return { ...result, text: local.text };
     }
 
     try {
-      const out = await askModel(notes, q, liveText, config, fetchImpl);
+      const out = await askModel(hits, q, liveText, config, fetchImpl);
       const bad = unsupportedNumbers(out.text, notesText(notes) + "\n" + liveText);
       if (bad.length) {
-        return { text: local.text, source: "local", grounded: false, replaced: true, bad,
-          raw: out.text, live: liveFact, sentence: local.sentence, note: local.note, ms: out.ms };
+        return { ...result, text: local.text, grounded: false, replaced: true, bad, raw: out.text, ms: out.ms };
       }
-      return { text: out.text, source: "api", grounded: true, replaced: false,
-        live: liveFact, sentence: local.sentence, note: local.note, ms: out.ms };
+      return { ...result, source: "api", text: out.text, ms: out.ms, incomplete: oneSided(out.text, hits, q) };
     } catch (e) {
-      return { text: local.text, source: "local", grounded: true, replaced: false,
-        live: liveFact, sentence: local.sentence, note: local.note, error: e.message, ms: 0 };
+      return { ...result, text: local.text, error: e.message };
     }
   }
 
@@ -337,12 +405,18 @@
     el("answer").className = "answer " + (res.source === "api" ? "api" : "local") + (res.grounded ? "" : " warn");
 
     const bits = [res.source === "api" ? "UnoRouter" : "local reader"];
+    if (res.notesTotal) {
+      bits.push("read " + res.notesRead + " of " + res.notesTotal + " note" + (res.notesTotal === 1 ? "" : "s"));
+    }
     bits.push(res.grounded ? "figures grounded" : "unsupported figure blocked");
+    if (res.incomplete) bits.push("one side only");
     if (res.ms) bits.push(res.ms + " ms");
     if (res.error) bits.push("fallback: " + res.error);
     el("answer-meta").textContent = bits.join(" · ");
 
-    el("answer-note").textContent = res.sentence ? "Nearest note: " + res.sentence : "";
+    el("answer-note").textContent = res.sentences && res.sentences.length
+      ? "Evidence: " + res.sentences.join(" ")
+      : "";
     el("live-fact").textContent = res.live
       ? "Live fact (" + res.live.title + "): " + res.live.extract
       : "";
@@ -409,7 +483,7 @@
   window.__app = {
     NOTES_KEY, CFG_KEY,
     addNote, clearNotes, getNotes: () => notes.map(n => ({ ...n })),
-    answerQuestion, buildMessages, localAnswer, unsupportedNumbers, extractEntity, lookupLive,
+    answerQuestion, buildMessages, localAnswer, retrieve, supported, unsupportedNumbers, extractEntity, lookupLive,
     getNotesText: () => notesText(notes)
   };
 })();

@@ -46,8 +46,15 @@ const app = page.globals.__app;
 if (!app) stop("index.html did not expose window.__app");
 
 const NOTE = "Acme Corp reported $2.3B revenue in Q3 2025, up 18% year over year. Their CFO said the renewal pipeline is strong. We agreed to send the security questionnaire by Friday.";
-app.clearNotes();
-app.addNote(NOTE);
+const TWO_SIDED = "I like the dark theme. I dislike the sidebar collapse.";
+const NOISE = "Lunch was pizza with the design team.";
+
+function useNotes(...texts) {
+  app.clearNotes();
+  for (const text of texts) app.addNote(text);
+}
+
+useNotes(NOTE);
 check("the page boots with one saved note", app.getNotes().length === 1);
 
 // A fetch stub that routes Wikipedia and the chat endpoint, and records the
@@ -70,24 +77,39 @@ const CFG = { baseUrl: "http://test.local/proxy", model: "test-model", key: "tes
 // ---------------------------------------------------------------- 3. the checks
 const CHECKS = [
   ["the local reader answers from the note", async () => {
+    useNotes(NOTE);
     const r = await app.answerQuestion("What did Acme report in Q3 2025?", null, { live: false });
     return r.source === "local" && r.text.includes("$2.3B")
       ? true
       : "got: " + r.text;
   }],
 
-  ["the prompt carries the notes and the question, not the key", async () => {
-    const msgs = app.buildMessages(app.getNotes(), "What did Acme report?", "");
+  // Only one of the question's two content words is in the sentence, and that
+  // still clears the support threshold, so the note answers instead of abstaining.
+  ["a partly-matching question still answers from the note", async () => {
+    useNotes(NOTE);
+    const r = await app.answerQuestion("What did Acme report?", null, { live: false });
+    return r.text.includes("$2.3B") ? true : "got: " + r.text;
+  }],
+
+  ["the prompt carries the matching note, not the unrelated one, and not the key", async () => {
+    useNotes(NOTE, NOISE);
+    const question = "What did Acme report?";
+    const hits = app.retrieve(app.getNotes(), question);
+    if (!hits.length) return "retrieval found nothing";
+    const msgs = app.buildMessages(hits, question, "");
     const system = msgs[0].content;
     const user = msgs[1].content;
-    if (!user.includes(NOTE)) return "note missing from prompt";
-    if (!user.includes("What did Acme report?")) return "question missing from prompt";
+    if (!user.includes("Acme Corp reported $2.3B revenue")) return "matching note missing from prompt";
+    if (user.includes("pizza")) return "unrelated note leaked into the prompt";
+    if (!user.includes(question)) return "question missing from prompt";
     if (!system.includes("ONLY")) return "prompt does not restrict the model";
     if (JSON.stringify(msgs).includes("test-secret-key-123")) return "key leaked into the prompt";
     return true;
   }],
 
   ["an invented figure is rejected and replaced", async () => {
+    useNotes(NOTE);
     const cap = {};
     const r = await app.answerQuestion(
       "What did Acme report in Q3 2025?",
@@ -104,6 +126,7 @@ const CHECKS = [
   }],
 
   ["a grounded model answer passes the gate", async () => {
+    useNotes(NOTE);
     const cap = {};
     const r = await app.answerQuestion(
       "What did Acme report in Q3 2025?",
@@ -116,6 +139,7 @@ const CHECKS = [
   }],
 
   ["a fetched live fact is allowed as a source", async () => {
+    useNotes(NOTE);
     const cap = {};
     const r = await app.answerQuestion(
       "When was Acme founded?",
@@ -137,6 +161,62 @@ const CHECKS = [
     if (!r.live || r.live.title !== "Acme Corp") return "live fact missing";
     if (!cap.body.messages[1].content.includes("1992")) return "live fact missing from prompt";
     return true;
+  }],
+
+  ["no note matches but a live fact does, so the model still answers", async () => {
+    useNotes(NOISE);
+    const r = await app.answerQuestion("When was Acme founded?", CFG, {
+      live: true,
+      fetchImpl: mockFetch({
+        answer: "Acme was founded in 1992.",
+        wiki: {
+          title: "Acme Corp",
+          extract: "Acme Corp is a company founded in 1992.",
+          content_urls: { desktop: { page: "https://en.wikipedia.org/wiki/Acme_Corp" } }
+        }
+      })
+    });
+    if (r.source !== "api" || r.grounded !== true) return JSON.stringify({ source: r.source, grounded: r.grounded, text: r.text });
+    if (r.notesRead !== 0) return "expected 0 notes read, got " + r.notesRead;
+    return true;
+  }],
+
+  ["a two-sided note is answered with both sides, never one", async () => {
+    useNotes(TWO_SIDED);
+    const r = await app.answerQuestion("Do I like the dark theme or the sidebar collapse?", null, { live: false });
+    if (!r.text.includes("dark theme")) return "missing the like side: " + r.text;
+    if (!r.text.includes("sidebar collapse")) return "missing the dislike side: " + r.text;
+    if (!/dislike/i.test(r.text)) return "missing the negative side: " + r.text;
+    return true;
+  }],
+
+  ["an unrelated question abstains instead of guessing, without a model call", async () => {
+    useNotes(NOTE);
+    let called = false;
+    const r = await app.answerQuestion("What is the marketing budget?", CFG, {
+      live: false,
+      fetchImpl: async () => { called = true; return { ok: true, json: async () => ({ choices: [{ message: { content: "x" } }] }) }; }
+    });
+    if (called) return "called the model with no evidence";
+    return r.source === "local" && r.text === "Not in your notes."
+      ? true
+      : JSON.stringify({ source: r.source, text: r.text });
+  }],
+
+  ["a one-sided model answer to a contrast question is flagged", async () => {
+    useNotes(TWO_SIDED);
+    const question = "Do I like the dark theme or the sidebar collapse?";
+    const one = await app.answerQuestion(question, CFG, {
+      live: false,
+      fetchImpl: mockFetch({ answer: "You like the dark theme." })
+    });
+    if (one.source !== "api") return "expected the api answer, got " + one.source + ": " + one.text;
+    if (one.incomplete !== true) return "one-sided answer was not flagged";
+    const both = await app.answerQuestion(question, CFG, {
+      live: false,
+      fetchImpl: mockFetch({ answer: "You like the dark theme but dislike the sidebar collapse." })
+    });
+    return both.incomplete === false ? true : "balanced answer was flagged";
   }]
 ];
 
