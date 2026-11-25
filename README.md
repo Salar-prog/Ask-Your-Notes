@@ -1,37 +1,33 @@
-# Notes Q&A
+# Ask Your Notes
 
-Ask questions about meeting notes you saved in the browser. The model sees the
-notes and an optional live Wikipedia fact, and every figure and date it returns
-is checked against those sources. A figure or date that is not in the notes or
-the live fact is rejected before it reaches you; a name that is not there is
-listed under the answer.
+Ask questions about meeting notes saved in the browser. Answers come from
+UnoRouter, but every figure and date in them is checked against the notes (or a
+fetched Wikipedia fact) first. An invented figure or date is replaced with the
+note's own sentence; a name that is not in the sources is flagged under the
+answer.
 
-The claim is in [CLAIM.md](CLAIM.md). `node verify.mjs` proves it offline.
+The one-sentence claim is in [CLAIM.md](CLAIM.md). `node verify.mjs` proves it
+offline, with no key and no network.
 
 ## Run
 
-```bash
-# from this directory
-UPSTREAM=https://api.unorouter.com/v1 node serve.mjs
-# open http://localhost:8080
-```
-
-Open **UnoRouter config**, set a model (for example `gpt-oss-120b:free`) and
-your API key, then ask. The key stays in `localStorage` and is sent only to the
-local proxy in `serve.mjs`; it is never written to this repo.
-
-### Key on the server instead
+Node 24, no install, no build.
 
 ```bash
-cp .env.example .env    # fill in UNOROUTER_API_KEY and UNOROUTER_MODEL
-node serve.mjs
+cp .env.example .env    # UNOROUTER_API_KEY and UNOROUTER_MODEL
+node serve.mjs          # http://127.0.0.1:8080
 ```
 
-`serve.mjs` reads `.env` (gitignored) or the environment, injects the
-`Authorization` header, pins `UNOROUTER_MODEL`, and answers `GET /api/config`
-with `{ key: true, model }` — never the key. The page then hides the base URL,
-model and key fields and calls `/proxy` with no key at all. A browser-sent key
-still works if no server key is set.
+The key stays on the server. `serve.mjs` reads `.env` (gitignored) or the
+environment, injects the `Authorization` header, pins `UNOROUTER_MODEL`, and
+answers `GET /api/config` with `{ key: true, model }` — never the key. The page
+then hides the base URL, model and key fields and calls `/proxy` with no key at
+all.
+
+Prefer to type the key in the browser? Leave `UNOROUTER_API_KEY` empty, start the
+server, and open **UnoRouter config** in the page. The key is kept in
+`localStorage` and sent only to the local proxy; it is never written to this
+repo.
 
 The server also keeps the free-tier limits from becoming a retry loop: a `429`
 from UnoRouter starts a cooldown for that model and later requests get a local
@@ -41,11 +37,10 @@ answered with `X-Cache: hit`. Upstream calls time out after 25 seconds. It binds
 `127.0.0.1` by default because it holds the key; set `HOST` to change that.
 
 No key? The local reader still answers from the saved notes. That is the
-fallback, not a degraded mode: the notes are the source either way.
-
-Free models allow about one request per minute. The UI does not retry in a
-loop; if the model is busy (`429`/`503`) the local reader answers and the
-status line shows the fallback reason.
+fallback, not a degraded mode: the notes are the source either way. Free models
+allow about one request per minute; the UI does not retry in a loop. If the model
+is busy (`429`/`503`) the local reader answers and the status line shows the
+fallback reason.
 
 Find a model your key can use:
 
@@ -61,7 +56,7 @@ curl https://api.unorouter.com/v1/models \
 
 **A `403` from `/proxy/chat/completions` is UnoRouter's status, not the local
 server's.** Restart `serve.mjs` after updating it and read the terminal; the
-proxy now prints the upstream body. The usual causes:
+proxy prints the upstream body. The usual causes:
 
 - The key is the account **access token** from Settings, not the **API key**
   from the Tokens page. API keys start with `sk-`; access tokens are 29–32
@@ -164,6 +159,14 @@ Wikipedia call and the chat call, and checks:
 
 No network and no API key are needed for the gate.
 
+## Files
+
+- `index.html` — the whole app: one page, one `<script>` block, no build.
+- `verify.mjs` — the gate; every check drives the real page script.
+- `harness.mjs` — the stub DOM that lets Node run that script.
+- `serve.mjs` — static server, `/proxy`, server-side key, cache, cooldown.
+- `CLAIM.md` — the one sentence the gate proves.
+
 ## Limits (read this before trusting it)
 
 - **Not full fact-checking.** Figures and dates are blocked; names are only
@@ -215,5 +218,5 @@ No network and no API key are needed for the gate.
 - **No layout QA.** The verifier proves the script runs and the logic holds; it
   does not prove the page looks right in a browser.
 
-`harness.mjs`, `serve.mjs`, and the starting structure come from the
-MIT-licensed template in `../template/`.
+`harness.mjs`, `serve.mjs`, and the page structure started from a small
+MIT-licensed static-page template.

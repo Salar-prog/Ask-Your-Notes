@@ -1,5 +1,5 @@
-// Optional. Serves the folder and proxies to one fixed upstream, because
-// api.unorouter.com sends no CORS headers.
+// Static server and the only route to UnoRouter (`/proxy`), which sends no CORS
+// headers. Holds the key when `.env` or the environment provides one.
 //
 //   node serve.mjs
 //
@@ -8,6 +8,7 @@
 //   UNOROUTER_BASE_URL  default https://api.unorouter.com/v1
 //   UNOROUTER_MODEL     pins the model; the browser cannot change it
 //   UPSTREAM            older name for UNOROUTER_BASE_URL
+//   HOST / PORT         listen address, default 127.0.0.1:8080
 //
 // With no server key the page can still send one from its config panel.
 import { createServer } from "node:http";
@@ -17,8 +18,6 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
-const PORT = Number(process.env.PORT || 8080);
-const HOST = process.env.HOST || "127.0.0.1";
 const CACHE_MS = 10 * 60 * 1000;
 const CACHE_MAX = 20;
 const MAX_TOKENS = 400;
@@ -38,6 +37,8 @@ function loadEnv(file) {
 }
 
 const ENV = { ...loadEnv(join(ROOT, ".env")), ...process.env };
+const PORT = Number(ENV.PORT || 8080);
+const HOST = ENV.HOST || "127.0.0.1";
 const API_KEY = ENV.UNOROUTER_API_KEY || "";
 const MODEL = ENV.UNOROUTER_MODEL || "";
 const DEFAULT_UPSTREAM = (ENV.UNOROUTER_BASE_URL || ENV.UPSTREAM || "").replace(/\/+$/, "");
