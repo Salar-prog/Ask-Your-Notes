@@ -4,7 +4,9 @@
 // functions the UI uses. No network: the model and Wikipedia calls are mocked,
 // so the gate works offline and without an API key.
 import { readFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { boot } from "./harness.mjs";
+import { createApp } from "./serve.mjs";
 
 const failures = [];
 let ran = 0;
@@ -78,6 +80,16 @@ function mockFetch({ answer, wiki = null, capture = {} }) {
 }
 
 const CFG = { baseUrl: "http://test.local/proxy", model: "test-model", key: "test-secret-key-123" };
+
+const listen = server => new Promise(ok =>
+  server.listen(0, "127.0.0.1", () => ok("http://127.0.0.1:" + server.address().port))
+);
+const close = server => new Promise(ok => server.close(ok));
+const post = (url, body, headers = {}) => fetch(url, {
+  method: "POST",
+  headers: { "Content-Type": "application/json", ...headers },
+  body: JSON.stringify(body)
+});
 
 // ---------------------------------------------------------------- 3. the checks
 const CHECKS = [
@@ -357,6 +369,138 @@ const CHECKS = [
     useNotes(NOTE);
     const r = await app.summarize("", null, {});
     return r.text === "Paste a transcript first." ? true : "got: " + r.text;
+  }],
+
+  ["the server reports a key without leaking it", async () => {
+    const srv = createApp({ upstream: "http://127.0.0.1:1", key: "server-secret-xyz", model: "pinned-model" });
+    const base = await listen(srv);
+    try {
+      const res = await fetch(base + "/api/config");
+      const body = await res.text();
+      const info = JSON.parse(body);
+      if (info.key !== true) return "key flag: " + info.key;
+      if (info.model !== "pinned-model") return "model: " + info.model;
+      if (body.includes("server-secret-xyz")) return "the key leaked in /api/config";
+      return true;
+    } finally {
+      await close(srv);
+    }
+  }],
+
+  ["the server key answers a keyless browser request and pins the model", async () => {
+    let seen = null;
+    const up = createServer((req, res) => {
+      const chunks = [];
+      req.on("data", c => chunks.push(c));
+      req.on("end", () => {
+        seen = { auth: req.headers.authorization, body: JSON.parse(Buffer.concat(chunks).toString()) };
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ choices: [{ message: { content: "ok" } }] }));
+      });
+    });
+    const upBase = await listen(up);
+    const srv = createApp({ upstream: upBase, key: "server-key", model: "pinned-model" });
+    const base = await listen(srv);
+    try {
+      const res = await post(base + "/proxy/chat/completions", {
+        model: "client-model",
+        max_tokens: 9999,
+        messages: [{ role: "user", content: "hi" }]
+      });
+      if (res.status !== 200) return "status: " + res.status;
+      if (!seen) return "the upstream was never called";
+      if (seen.auth !== "Bearer server-key") return "auth: " + seen.auth;
+      if (seen.body.model !== "pinned-model") return "model: " + seen.body.model;
+      if (seen.body.max_tokens > 400) return "max_tokens: " + seen.body.max_tokens;
+      return true;
+    } finally {
+      await close(srv);
+      await close(up);
+    }
+  }],
+
+  ["an upstream 429 becomes a local cooldown, not a retry storm", async () => {
+    let calls = 0;
+    const up = createServer((req, res) => {
+      calls++;
+      res.writeHead(429, { "Retry-After": "2", "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: { message: "slow down" } }));
+    });
+    const upBase = await listen(up);
+    const srv = createApp({ upstream: upBase, key: "server-key", model: "pinned-model" });
+    const base = await listen(srv);
+    const body = { model: "pinned-model", messages: [{ role: "user", content: "hi" }] };
+    try {
+      const first = await post(base + "/proxy/chat/completions", body);
+      if (first.status !== 429) return "first status: " + first.status;
+      const second = await post(base + "/proxy/chat/completions", body);
+      const json = await second.json();
+      if (calls !== 1) return "upstream calls: " + calls;
+      if (second.status !== 429 || json.error.code !== "local_cooldown") {
+        return "second: " + second.status + " " + JSON.stringify(json);
+      }
+      return true;
+    } finally {
+      await close(srv);
+      await close(up);
+    }
+  }],
+
+  ["a repeated request is served from cache", async () => {
+    let calls = 0;
+    const up = createServer((req, res) => {
+      calls++;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ choices: [{ message: { content: "ok" } }] }));
+    });
+    const upBase = await listen(up);
+    const srv = createApp({ upstream: upBase, key: "server-key", model: "pinned-model" });
+    const base = await listen(srv);
+    const body = { model: "pinned-model", messages: [{ role: "user", content: "same" }] };
+    try {
+      await post(base + "/proxy/chat/completions", body);
+      const second = await post(base + "/proxy/chat/completions", body);
+      if (second.status !== 200) return "status: " + second.status;
+      if (second.headers.get("x-cache") !== "hit") return "x-cache: " + second.headers.get("x-cache");
+      return calls === 1 ? true : "upstream calls: " + calls;
+    } finally {
+      await close(srv);
+      await close(up);
+    }
+  }],
+
+  ["the static server never serves .env", async () => {
+    const srv = createApp({ upstream: "http://127.0.0.1:1", key: "k", model: "m" });
+    const base = await listen(srv);
+    try {
+      const res = await fetch(base + "/.env");
+      return res.status === 404 ? true : "status: " + res.status;
+    } finally {
+      await close(srv);
+    }
+  }],
+
+  // Last: booting a second page replaces the stub DOM the checks above use.
+  ["the page hides its key field when the server holds the key", async () => {
+    const page2 = boot();
+    const a = page2.globals.__app;
+    const info = await a.probeServer(async () => ({
+      ok: true,
+      json: async () => ({ key: true, model: "pinned-model" })
+    }));
+    if (!info) return "probe returned nothing";
+    const config = a.readCfgFields();
+    if (config.serverSide !== true || config.key !== "" || config.baseUrl !== "/proxy") {
+      return JSON.stringify(config);
+    }
+    if (!page2.el("row-key").hidden) return "the key field is still visible";
+    const answer = await a.answerQuestion("What did Acme report?", config, {
+      live: false,
+      fetchImpl: mockFetch({ answer: "Acme reported $2.3B in Q3 2025." })
+    });
+    return answer.source === "api"
+      ? true
+      : "a keyless server config did not reach the model: " + answer.source + " " + (answer.error || "");
   }]
 ];
 

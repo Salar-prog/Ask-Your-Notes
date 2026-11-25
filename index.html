@@ -105,13 +105,16 @@
   <details class="config">
     <summary>UnoRouter config</summary>
     <p>
-      The key stays in this browser and is sent only to the local proxy. Run
-      <code>UPSTREAM=https://api.unorouter.com/v1 node serve.mjs</code>, open
-      <code>http://localhost:8080</code>, then ask. No key? The local reader answers from the notes.
+      The key stays in this browser and is sent only to the local proxy, unless
+      <code>serve.mjs</code> holds <code>UNOROUTER_API_KEY</code> — then the page
+      never sees it and the fields below are hidden. Run
+      <code>UNOROUTER_BASE_URL=https://api.unorouter.com/v1 node serve.mjs</code>,
+      open <code>http://localhost:8080</code>, then ask. No key? The local reader
+      answers from the notes.
     </p>
-    <label>Base URL <input id="cfg-base" type="text" autocomplete="off" spellcheck="false"></label>
-    <label>Model <input id="cfg-model" type="text" autocomplete="off" spellcheck="false"></label>
-    <label>API key <input id="cfg-key" type="password" autocomplete="off"></label>
+    <label id="row-base">Base URL <input id="cfg-base" type="text" autocomplete="off" spellcheck="false"></label>
+    <label id="row-model">Model <input id="cfg-model" type="text" autocomplete="off" spellcheck="false"></label>
+    <label id="row-key">API key <input id="cfg-key" type="password" autocomplete="off"></label>
     <div class="row">
       <button id="cfg-save" class="ghost">Save config</button>
       <span id="status" class="meta"></span>
@@ -123,7 +126,7 @@
     never depends on the API to answer. A sentence must match half the question to count as evidence,
     and a two-sided note is answered with both sides. Figures and dates must come from the notes or the
     live fact; a name that is not in either is listed under the answer. Paste a transcript to get a
-    cited summary of up to 40 lines.
+    cited summary of up to 40 lines. When the server holds the key, the browser never receives it.
   </footer>
 </main>
 
@@ -193,6 +196,27 @@
 
   let cfg = loadCfg();
   let liveEnabled = localStorage.getItem(LIVE_KEY) !== "0";
+  // Set when serve.mjs reports a server-side key. Then the page sends no key and
+  // no base URL of its own: both are the server's.
+  let serverCfg = null;
+
+  async function probeServer(fetchImpl = fetch) {
+    try {
+      const res = await fetchImpl("/api/config");
+      if (!res || !res.ok) return null;
+      const info = await res.json();
+      if (!info || !info.key) return null;
+      serverCfg = info;
+      el("row-base").hidden = true;
+      el("row-model").hidden = true;
+      el("row-key").hidden = true;
+      el("status").textContent = "Key held by the server"
+        + (info.model ? "; model pinned to " + info.model : "") + ".";
+      return info;
+    } catch {
+      return null; // not served by serve.mjs; the config fields are the fallback
+    }
+  }
 
   // ---------------------------------------------------------------- text
 
@@ -430,7 +454,7 @@
     const local = localAnswer(hits, q);
 
     let liveFact = null;
-    if (live && config && config.key) liveFact = await lookupLive(q, fetchImpl);
+    if (live && config && (config.key || config.serverSide)) liveFact = await lookupLive(q, fetchImpl);
     const liveText = liveFact ? liveFact.title + ": " + liveFact.extract : "";
 
     const result = {
@@ -443,7 +467,7 @@
     // No matching note and no live fact: abstain without spending a request.
     if (!hits.length && !liveFact) return { ...result, text: local.text };
 
-    if (!config || !config.baseUrl || !config.model || !config.key) {
+    if (!config || !config.baseUrl || !config.model || !(config.key || config.serverSide)) {
       return { ...result, text: local.text };
     }
 
@@ -548,7 +572,7 @@
     result.cited = local.cited;
     result.sentences = local.cited.map(s => s.text);
 
-    if (!config || !config.baseUrl || !config.model || !config.key) {
+    if (!config || !config.baseUrl || !config.model || !(config.key || config.serverSide)) {
       return { ...result, text: local.text };
     }
 
@@ -634,6 +658,14 @@
   }
 
   function readCfgFields() {
+    if (serverCfg) {
+      return {
+        baseUrl: "/proxy",
+        model: serverCfg.model || el("cfg-model").value.trim() || DEFAULT_CFG.model,
+        key: "",
+        serverSide: true
+      };
+    }
     return {
       baseUrl: el("cfg-base").value.trim() || DEFAULT_CFG.baseUrl,
       model: el("cfg-model").value.trim(),
@@ -670,10 +702,10 @@
 
   el("cfg-save").addEventListener("click", () => {
     cfg = readCfgFields();
-    localStorage.setItem(CFG_KEY, JSON.stringify(cfg));
+    if (!serverCfg) localStorage.setItem(CFG_KEY, JSON.stringify(cfg));
     liveEnabled = el("live-enabled").checked;
     localStorage.setItem(LIVE_KEY, liveEnabled ? "1" : "0");
-    el("status").textContent = "Saved.";
+    el("status").textContent = serverCfg ? "Key held by the server." : "Saved.";
   });
 
   el("live-enabled").addEventListener("change", () => {
@@ -719,6 +751,7 @@
 
   renderCfg();
   renderNotes();
+  probeServer();
 
   // The hook verify.mjs uses. Keep it.
   window.__app = {
@@ -726,6 +759,7 @@
     addNote, addTranscript, clearNotes, getNotes: () => notes.map(n => ({ ...n })),
     answerQuestion, summarize, buildMessages, localAnswer, retrieve, supported, unsupportedNumbers,
     unsupportedDates, unknownNames, extractEntity, lookupLive,
+    probeServer, readCfgFields,
     getNotesText: () => notesText(notes)
   };
 })();

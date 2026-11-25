@@ -20,6 +20,26 @@ Open **UnoRouter config**, set a model (for example `gpt-oss-120b:free`) and
 your API key, then ask. The key stays in `localStorage` and is sent only to the
 local proxy in `serve.mjs`; it is never written to this repo.
 
+### Key on the server instead
+
+```bash
+cp .env.example .env    # fill in UNOROUTER_API_KEY and UNOROUTER_MODEL
+node serve.mjs
+```
+
+`serve.mjs` reads `.env` (gitignored) or the environment, injects the
+`Authorization` header, pins `UNOROUTER_MODEL`, and answers `GET /api/config`
+with `{ key: true, model }` — never the key. The page then hides the base URL,
+model and key fields and calls `/proxy` with no key at all. A browser-sent key
+still works if no server key is set.
+
+The server also keeps the free-tier limits from becoming a retry loop: a `429`
+from UnoRouter starts a cooldown for that model and later requests get a local
+`429` with `error.code: "local_cooldown"` and `Retry-After` until it expires.
+Identical requests (same model and messages) are cached for 10 minutes and
+answered with `X-Cache: hit`. Upstream calls time out after 25 seconds. It binds
+`127.0.0.1` by default because it holds the key; set `HOST` to change that.
+
 No key? The local reader still answers from the saved notes. That is the
 fallback, not a degraded mode: the notes are the source either way.
 
@@ -134,7 +154,13 @@ Wikipedia call and the chat call, and checks:
 - the local reader summarises and ranks transcript lines, and abstains on an
   unrelated question;
 - a citation outside the transcript is ignored;
-- summarising with no transcript says so.
+- summarising with no transcript says so;
+- `/api/config` reports that a key exists without returning it;
+- the server key answers a keyless request and pins the model and token cap;
+- an upstream `429` becomes a local cooldown with one upstream call, not two;
+- an identical request is served from cache;
+- `.env` is not served by the static file route;
+- the page hides its key fields and sends no key when the server has one.
 
 No network and no API key are needed for the gate.
 
@@ -175,8 +201,15 @@ No network and no API key are needed for the gate.
   `no segment citations`; the app does not guess which line was meant.
 - **One browser.** Notes and transcripts are in `localStorage`; there is no
   account, server storage, or sync. Clearing site data clears them.
-- **The key is in the browser.** Fine for a local demo; for a shared deployment,
-  move the UnoRouter call behind a backend and keep the key in the environment.
+- **The proxy is a demo server.** The cache and cooldown live in one process's
+  memory: restarting forgets them, and each process has its own. The cache is
+  keyed by model and messages, so a changed note set is a fresh request. There
+  is no user auth: anyone who can reach the port can ask through the server key,
+  which is why it binds `127.0.0.1` by default.
+- **The key is only as private as the mode.** With `UNOROUTER_API_KEY` on the
+  server it never reaches the browser. Without it the page keeps the key in
+  `localStorage` and sends it through the local proxy: fine for a local demo,
+  not for a shared deployment.
 - **Wikipedia only.** The live lookup is one REST call for a capitalised entity
   in the question. It is not a web search and it does not fetch arbitrary URLs.
 - **No layout QA.** The verifier proves the script runs and the logic holds; it
