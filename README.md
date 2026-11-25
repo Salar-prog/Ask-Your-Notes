@@ -90,6 +90,14 @@ allowed to do this; `429` means wait for `Retry-After`; `503` with
      only says what it cannot confirm.
 6. Every answer shows how many notes were read, the evidence sentences, the
    live fact if one was fetched, and any name it could not confirm.
+7. Paste a transcript in the Notes panel and press **Add transcript** — one
+   speaker line per row. **Summarise** sends up to 40 numbered lines to the
+   model and asks for at most three bullets, each ending with the line numbers
+   it came from (`[2][5]`). The cited lines are shown under the summary. A
+   figure or date in a summary is checked against the transcript exactly like a
+   note answer; citation markers are removed before that check, so `[1]` is not
+   read as the figure 1. A citation number outside the transcript is ignored,
+   and a summary with no valid citations says `no segment citations`.
 
 The prompt restricts the model to the notes and the live fact, but the prompt
 is not the guarantee. The guarantee is the check on the text:
@@ -119,7 +127,14 @@ Wikipedia call and the chat call, and checks:
 - a number that exists only in the fetched live fact is allowed;
 - a two-sided note answers with both sides;
 - an unrelated question abstains without calling the model;
-- a one-sided model answer to a contrast question is flagged.
+- a one-sided model answer to a contrast question is flagged;
+- a transcript is stored separately from a note;
+- a grounded summary passes and cites its segments;
+- a summary with an invented date is blocked;
+- the local reader summarises and ranks transcript lines, and abstains on an
+  unrelated question;
+- a citation outside the transcript is ignored;
+- summarising with no transcript says so.
 
 No network and no API key are needed for the gate.
 
@@ -152,8 +167,14 @@ No network and no API key are needed for the gate.
   `agree`/`disagree`, and a few synonyms. "I prefer X" vs "X is fine" is not
   detected as a contradiction; the note still answers, but the one-side warning
   may not fire.
-- **One browser.** Notes are in `localStorage`; there is no account, server
-  storage, or sync. Clearing site data clears the notes.
+- **Summaries truncate.** Only the first 40 transcript lines are sent, so a long
+  meeting is summarised from its opening. Add a second transcript for later
+  parts, or raise `SEGMENTS` (and the token budget) when needed.
+- **Citations are a prompt contract.** The model is asked to end each bullet
+  with `[n]`. If it ignores that, the answer is still shown but marked
+  `no segment citations`; the app does not guess which line was meant.
+- **One browser.** Notes and transcripts are in `localStorage`; there is no
+  account, server storage, or sync. Clearing site data clears them.
 - **The key is in the browser.** Fine for a local demo; for a shared deployment,
   move the UnoRouter call behind a backend and keep the key in the environment.
 - **Wikipedia only.** The live lookup is one REST call for a capitalised entity

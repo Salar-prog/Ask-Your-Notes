@@ -67,7 +67,7 @@
 <main>
   <p class="eyebrow">meeting notes / grounded answers</p>
   <h1>Ask your notes.</h1>
-  <p id="claim">The model may write the answer, but every figure and date it cites must already exist in a saved note or a fetched live fact. Invented figures and dates are replaced; names that are not in the notes are flagged.</p>
+  <p id="claim">The model may write the answer, but every figure and date it cites must already exist in a saved note or a fetched live fact. Invented figures and dates are replaced; names that are not in the notes are flagged. A transcript summary shows the transcript lines it cites.</p>
 
   <div class="grid">
     <section class="panel">
@@ -78,6 +78,13 @@
         <button id="clear-notes" class="ghost">Clear all</button>
       </div>
       <div id="notes" class="notes"></div>
+      <details class="config">
+        <summary>Paste transcript</summary>
+        <textarea id="transcript-input" placeholder="Alice: We ship on 12 March 2026&#10;Bob: I will own the launch checklist"></textarea>
+        <div class="row">
+          <button id="add-transcript" class="ghost">Add transcript</button>
+        </div>
+      </details>
     </section>
 
     <section class="panel">
@@ -85,6 +92,7 @@
       <input id="question" type="text" placeholder="What did Acme report in Q3?" autocomplete="off">
       <div class="row">
         <button id="ask">Ask</button>
+        <button id="summarise" class="ghost">Summarise</button>
         <label class="toggle"><input type="checkbox" id="live-enabled"> live Wikipedia fact</label>
       </div>
       <div id="answer" class="answer" aria-live="polite">Ask a question about the notes.</div>
@@ -114,7 +122,8 @@
     Free models allow about one request per minute. The local reader works with no key, so the page
     never depends on the API to answer. A sentence must match half the question to count as evidence,
     and a two-sided note is answered with both sides. Figures and dates must come from the notes or the
-    live fact; a name that is not in either is listed under the answer.
+    live fact; a name that is not in either is listed under the answer. Paste a transcript to get a
+    cited summary of up to 40 lines.
   </footer>
 </main>
 
@@ -150,6 +159,22 @@
     const note = {
       id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
       createdAt: new Date().toISOString(),
+      kind: "note",
+      text: clean
+    };
+    notes.push(note);
+    saveNotes();
+    return note;
+  }
+
+  // Stored like a note, but marked so the summary action can find it.
+  function addTranscript(text) {
+    const clean = String(text || "").trim();
+    if (!clean) return null;
+    const note = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      createdAt: new Date().toISOString(),
+      kind: "transcript",
       text: clean
     };
     notes.push(note);
@@ -342,7 +367,7 @@
     } catch { return null; }
   }
 
-  async function askModel(hits, question, liveText, config, fetchImpl) {
+  async function postModel(messages, config, fetchImpl, maxTokens = 220) {
     const t0 = Date.now();
     const base = String(config.baseUrl || "").replace(/\/+$/, "");
     const res = await fetchImpl(base + "/chat/completions", {
@@ -354,8 +379,8 @@
       body: JSON.stringify({
         model: config.model,
         temperature: 0.2,
-        max_tokens: 220,
-        messages: buildMessages(hits, question, liveText)
+        max_tokens: maxTokens,
+        messages
       })
     });
     if (!res || !res.ok) throw new Error("HTTP " + (res ? res.status : "no response"));
@@ -365,6 +390,19 @@
       : "";
     if (!text) throw new Error("empty response");
     return { text, ms: Date.now() - t0 };
+  }
+
+  const askModel = (hits, question, liveText, config, fetchImpl) =>
+    postModel(buildMessages(hits, question, liveText), config, fetchImpl);
+
+  // One place decides whether a model text is blocked, weak, or clean, so the
+  // Q&A path and the summary path cannot drift apart.
+  function verdict(text, sources) {
+    const bad = unsupportedNumbers(text, sources);
+    const badDates = unsupportedDates(text, sources);
+    if (bad.length || badDates.length) return { blocked: true, bad, badDates };
+    const unknown = unknownNames(text, sources);
+    return { blocked: false, weak: unknown.length > 0, unknownNames: unknown };
   }
 
   // True when the evidence holds both sides of a contrast the question asks
@@ -411,15 +449,124 @@
 
     try {
       const out = await askModel(hits, q, liveText, config, fetchImpl);
-      const sources = notesText(notes) + "\n" + liveText;
-      const bad = unsupportedNumbers(out.text, sources);
-      const badDates = unsupportedDates(out.text, sources);
-      if (bad.length || badDates.length) {
-        return { ...result, text: local.text, grounded: false, replaced: true, bad, badDates, raw: out.text, ms: out.ms };
+      const v = verdict(out.text, notesText(notes) + "\n" + liveText);
+      if (v.blocked) {
+        return { ...result, text: local.text, grounded: false, replaced: true,
+          bad: v.bad, badDates: v.badDates, raw: out.text, ms: out.ms };
       }
-      const unknown = unknownNames(out.text, sources);
       return { ...result, source: "api", text: out.text, ms: out.ms,
-        incomplete: oneSided(out.text, hits, q), weak: unknown.length > 0, unknownNames: unknown };
+        incomplete: oneSided(out.text, hits, q), weak: v.weak, unknownNames: v.unknownNames };
+    } catch (e) {
+      return { ...result, text: local.text, error: e.message };
+    }
+  }
+
+  // ---------------------------------------------------------------- summary
+
+  const SEGMENTS = 40;
+  const SUMMARY_ASK = "Summarise the decisions and the next steps.";
+
+  function transcriptSegments() {
+    const out = [];
+    for (const note of notes) {
+      if (note.kind !== "transcript") continue;
+      for (const line of String(note.text).split(/\n+/).map(s => s.trim()).filter(Boolean)) {
+        out.push({ n: out.length + 1, note, text: line });
+      }
+    }
+    return out;
+  }
+
+  function rankSegments(segments, question) {
+    const q = contentTokens(question);
+    if (!q.length) return [];
+    return segments
+      .map(seg => {
+        const words = new Set(tokens(seg.text));
+        return { seg, score: q.filter(t => words.has(t)).length };
+      })
+      .filter(x => x.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3)
+      .map(x => x.seg);
+  }
+
+  // [2] or [2][5] in the model's bullets, mapped back to the segments sent.
+  function citedSegments(answer, segments) {
+    const byNumber = new Map(segments.map(s => [s.n, s]));
+    const cited = [];
+    for (const match of String(answer).matchAll(/\[(\d{1,3})\]/g)) {
+      const seg = byNumber.get(Number(match[1]));
+      if (seg && !cited.includes(seg)) cited.push(seg);
+    }
+    return cited;
+  }
+
+  function summaryMessages(segments, request) {
+    return [
+      {
+        role: "system",
+        content:
+          "You summarise a meeting transcript. Use ONLY the TRANSCRIPT below. " +
+          "Reply with at most three short bullets. End every bullet with the segment numbers it comes from, like [2][5]. " +
+          "Copy every figure and date exactly as written. Never invent a number, date, or name. " +
+          "If the transcript does not answer the request, say exactly: Not in your notes."
+      },
+      {
+        role: "user",
+        content:
+          "TRANSCRIPT:\n" + segments.map(s => "[" + s.n + "] " + s.text).join("\n") +
+          "\n\nREQUEST:\n" + request
+      }
+    ];
+  }
+
+  function localSummary(segments, q) {
+    const picks = q ? rankSegments(segments, q) : segments.slice(0, 3);
+    if (!picks.length) return { text: "Not in the transcript.", cited: [] };
+    return {
+      text: "From the transcript:\n" + picks.map(s => "- " + s.text + " [" + s.n + "]").join("\n"),
+      cited: picks
+    };
+  }
+
+  async function summarize(question, config = cfg, opts = {}) {
+    const q = String(question || "").trim();
+    const fetchImpl = opts.fetchImpl || fetch;
+    const all = transcriptSegments();
+    const result = {
+      kind: "summary", source: "local", grounded: true, replaced: false, incomplete: false,
+      weak: false, unknownNames: [], cited: [], uncited: false, live: null,
+      sentences: [], note: null, ms: 0, hits: 0, notesRead: 0, notesTotal: notes.length
+    };
+    if (!all.length) return { ...result, text: "Paste a transcript first." };
+
+    const segments = all.slice(0, SEGMENTS);
+    result.hits = segments.length;
+    result.notesRead = new Set(segments.map(s => s.note.id)).size;
+    const local = localSummary(segments, q);
+    result.cited = local.cited;
+    result.sentences = local.cited.map(s => s.text);
+
+    if (!config || !config.baseUrl || !config.model || !config.key) {
+      return { ...result, text: local.text };
+    }
+
+    try {
+      const out = await postModel(
+        summaryMessages(segments, q || SUMMARY_ASK), config, fetchImpl, 320
+      );
+      const sources = segments.map(s => s.text).join("\n");
+      // [1] is a citation marker, not a figure: strip it before the gate.
+      const v = verdict(out.text.replace(/\[\d{1,3}\]/g, " "), sources);
+      if (v.blocked) {
+        return { ...result, text: local.text, grounded: false, replaced: true,
+          bad: v.bad, badDates: v.badDates, raw: out.text, ms: out.ms };
+      }
+      const cited = citedSegments(out.text, segments);
+      return { ...result, source: "api", text: out.text, ms: out.ms,
+        weak: v.weak, unknownNames: v.unknownNames, cited,
+        sentences: cited.map(s => s.text), uncited: cited.length === 0 };
     } catch (e) {
       return { ...result, text: local.text, error: e.message };
     }
@@ -435,7 +582,7 @@
       const row = document.createElement("article");
       row.className = "note";
       const time = document.createElement("time");
-      time.textContent = new Date(n.createdAt).toLocaleString();
+      time.textContent = (n.kind === "transcript" ? "transcript · " : "") + new Date(n.createdAt).toLocaleString();
       const p = document.createElement("p");
       p.textContent = n.text;
       row.appendChild(time);
@@ -443,6 +590,11 @@
       host.appendChild(row);
     }
   }
+
+  const clip = (text, n = 90) => {
+    const s = String(text).replace(/\s+/g, " ").trim();
+    return s.length > n ? s.slice(0, n - 1) + "…" : s;
+  };
 
   function renderAnswer(res) {
     el("answer").textContent = res.text;
@@ -454,6 +606,10 @@
     if (res.notesTotal) {
       bits.push("read " + res.notesRead + " of " + res.notesTotal + " note" + (res.notesTotal === 1 ? "" : "s"));
     }
+    if (res.kind === "summary") {
+      bits.push(res.uncited ? "no segment citations"
+        : res.cited.length + " segment" + (res.cited.length === 1 ? "" : "s") + " cited");
+    }
     bits.push(res.grounded
       ? "figures + dates grounded"
       : res.badDates && res.badDates.length ? "unsupported date blocked" : "unsupported figure blocked");
@@ -463,9 +619,15 @@
     if (res.error) bits.push("fallback: " + res.error);
     el("answer-meta").textContent = bits.join(" · ");
 
-    el("answer-note").textContent = res.sentences && res.sentences.length
-      ? "Evidence: " + res.sentences.join(" ")
-      : "";
+    if (res.kind === "summary") {
+      el("answer-note").textContent = res.cited.length
+        ? "Cited: " + res.cited.map(s => "[" + s.n + "] " + clip(s.text)).join(" · ")
+        : "";
+    } else {
+      el("answer-note").textContent = res.sentences && res.sentences.length
+        ? "Evidence: " + res.sentences.join(" ")
+        : "";
+    }
     el("live-fact").textContent = res.live
       ? "Live fact (" + res.live.title + "): " + res.live.extract
       : "";
@@ -493,8 +655,15 @@
     renderNotes();
   });
 
+  el("add-transcript").addEventListener("click", () => {
+    const transcript = addTranscript(el("transcript-input").value);
+    if (!transcript) return;
+    el("transcript-input").value = "";
+    renderNotes();
+  });
+
   el("clear-notes").addEventListener("click", () => {
-    if (!confirm("Delete every note from this browser?")) return;
+    if (!confirm("Delete every note and transcript from this browser?")) return;
     clearNotes();
     renderNotes();
   });
@@ -514,7 +683,11 @@
 
   el("ask").addEventListener("click", async () => {
     const q = el("question").value.trim();
-    if (!q) { el("answer").textContent = "Type a question first."; return; }
+    if (!q) {
+      el("answer").textContent = "Type a question first.";
+      el("answer").className = "answer local";
+      return;
+    }
     el("ask").disabled = true;
     el("answer-meta").textContent = "asking…";
     try {
@@ -525,14 +698,33 @@
     }
   });
 
+  el("summarise").addEventListener("click", async () => {
+    if (!notes.some(n => n.kind === "transcript")) {
+      el("answer").textContent = "Paste a transcript first.";
+      el("answer").className = "answer local";
+      el("answer-meta").textContent = "";
+      el("answer-note").textContent = "";
+      el("live-fact").textContent = "";
+      return;
+    }
+    el("summarise").disabled = true;
+    el("answer-meta").textContent = "summarising…";
+    try {
+      const res = await summarize(el("question").value.trim(), readCfgFields());
+      renderAnswer(res);
+    } finally {
+      el("summarise").disabled = false;
+    }
+  });
+
   renderCfg();
   renderNotes();
 
   // The hook verify.mjs uses. Keep it.
   window.__app = {
     NOTES_KEY, CFG_KEY,
-    addNote, clearNotes, getNotes: () => notes.map(n => ({ ...n })),
-    answerQuestion, buildMessages, localAnswer, retrieve, supported, unsupportedNumbers,
+    addNote, addTranscript, clearNotes, getNotes: () => notes.map(n => ({ ...n })),
+    answerQuestion, summarize, buildMessages, localAnswer, retrieve, supported, unsupportedNumbers,
     unsupportedDates, unknownNames, extractEntity, lookupLive,
     getNotesText: () => notesText(notes)
   };

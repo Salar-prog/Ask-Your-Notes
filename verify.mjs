@@ -48,6 +48,11 @@ if (!app) stop("index.html did not expose window.__app");
 const NOTE = "Acme Corp reported $2.3B revenue in Q3 2025, up 18% year over year. Their CFO said the renewal pipeline is strong. We agreed to send the security questionnaire by Friday.";
 const TWO_SIDED = "I like the dark theme. I dislike the sidebar collapse.";
 const NOISE = "Lunch was pizza with the design team.";
+const TRANSCRIPT = [
+  "Alice: We ship on 12 March 2026.",
+  "Bob: I will own the launch checklist.",
+  "Carol: Budget stays at $4,200."
+].join("\n");
 
 function useNotes(...texts) {
   app.clearNotes();
@@ -264,6 +269,94 @@ const CHECKS = [
       fetchImpl: mockFetch({ answer: "You like the dark theme but dislike the sidebar collapse." })
     });
     return both.incomplete === false ? true : "balanced answer was flagged";
+  }],
+
+  ["a transcript is stored separately from a note", async () => {
+    useNotes(NOTE);
+    app.addTranscript(TRANSCRIPT);
+    const all = app.getNotes();
+    const transcripts = all.filter(n => n.kind === "transcript");
+    if (transcripts.length !== 1) return "transcripts: " + transcripts.length;
+    if (!transcripts[0].text.includes("12 March 2026")) return "transcript text lost";
+    return all.some(n => n.kind === "note") ? true : "the plain note lost its kind";
+  }],
+
+  ["a grounded summary passes and cites its segments", async () => {
+    useNotes();
+    app.addTranscript(TRANSCRIPT);
+    const cap = {};
+    const r = await app.summarize("", CFG, {
+      fetchImpl: mockFetch({
+        answer: "We ship on 12 March 2026 [1]. Bob owns the launch checklist [2]. Budget is $4,200 [3].",
+        capture: cap
+      })
+    });
+    if (r.source !== "api" || r.grounded !== true) {
+      return JSON.stringify({ source: r.source, grounded: r.grounded, bad: r.bad, badDates: r.badDates });
+    }
+    if (!r.cited || r.cited.length !== 3) return "cited: " + JSON.stringify(r.cited && r.cited.map(s => s.n));
+    if (!cap.body.messages[1].content.includes("[3] Carol")) return "numbered segments missing from the prompt";
+    return true;
+  }],
+
+  ["a summary with an invented date is blocked", async () => {
+    useNotes();
+    app.addTranscript(TRANSCRIPT);
+    const r = await app.summarize("", CFG, {
+      fetchImpl: mockFetch({ answer: "We ship in March 2027 [1]." })
+    });
+    if (r.source !== "local" || r.replaced !== true) {
+      return JSON.stringify({ source: r.source, replaced: r.replaced, text: r.text });
+    }
+    if (!r.badDates || !r.badDates.some(d => d.includes("march 2027"))) {
+      return "dates: " + JSON.stringify(r.badDates);
+    }
+    return true;
+  }],
+
+  ["the local reader summarises transcript segments", async () => {
+    useNotes();
+    app.addTranscript(TRANSCRIPT);
+    const r = await app.summarize("", null, {});
+    if (r.source !== "local") return "source: " + r.source;
+    if (!r.cited || r.cited.length !== 3) return "cited: " + JSON.stringify(r.cited && r.cited.map(s => s.n));
+    if (!r.text.includes("12 March 2026")) return "summary missing the transcript line";
+    return r.uncited === false ? true : "flagged uncited";
+  }],
+
+  ["the local summary answers a question from the transcript", async () => {
+    useNotes();
+    app.addTranscript(TRANSCRIPT);
+    const r = await app.summarize("Who owns the checklist?", null, {});
+    if (!r.text.includes("Bob")) return "got: " + r.text;
+    if (!r.cited.some(s => s.text.includes("Bob"))) return "wrong citation";
+    return true;
+  }],
+
+  ["the local summary abstains when the question is not in the transcript", async () => {
+    useNotes();
+    app.addTranscript(TRANSCRIPT);
+    const r = await app.summarize("What is the pizza order?", null, {});
+    return r.text === "Not in the transcript." && r.cited.length === 0
+      ? true
+      : JSON.stringify({ text: r.text, cited: r.cited.length });
+  }],
+
+  ["an out-of-range citation is ignored, not shown as a source", async () => {
+    useNotes();
+    app.addTranscript(TRANSCRIPT);
+    const r = await app.summarize("", CFG, {
+      fetchImpl: mockFetch({ answer: "We ship on 12 March 2026 [9]." })
+    });
+    if (r.source !== "api") return "source: " + r.source;
+    if (r.cited.length !== 0) return "cited: " + JSON.stringify(r.cited.map(s => s.n));
+    return r.uncited === true ? true : "not flagged uncited";
+  }],
+
+  ["summarise with no transcript says so", async () => {
+    useNotes(NOTE);
+    const r = await app.summarize("", null, {});
+    return r.text === "Paste a transcript first." ? true : "got: " + r.text;
   }]
 ];
 
