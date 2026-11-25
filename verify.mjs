@@ -133,9 +133,56 @@ const CHECKS = [
       CFG,
       { live: false, fetchImpl: mockFetch({ answer: "Acme reported $2.3B in Q3 2025.", capture: cap }) }
     );
-    return r.source === "api" && r.grounded === true && r.text.includes("$2.3B")
+    if (r.source !== "api" || r.grounded !== true || !r.text.includes("$2.3B")) {
+      return JSON.stringify({ source: r.source, grounded: r.grounded, text: r.text });
+    }
+    return r.weak === false ? true : "a grounded name was flagged: " + JSON.stringify(r.unknownNames);
+  }],
+
+  ["an invented date is blocked, not just its digits", async () => {
+    useNotes(NOTE);
+    const r = await app.answerQuestion(
+      "What did Acme report in Q3 2025?",
+      CFG,
+      { live: false, fetchImpl: mockFetch({ answer: "Acme reported $2.3B in March 2025." }) }
+    );
+    if (r.source !== "local" || r.replaced !== true) {
+      return JSON.stringify({ source: r.source, replaced: r.replaced, text: r.text });
+    }
+    if (!r.badDates || !r.badDates.some(d => d.includes("march"))) {
+      return "blocked dates: " + JSON.stringify(r.badDates);
+    }
+    return true;
+  }],
+
+  ["a name absent from the notes is flagged weak, not blocked", async () => {
+    useNotes(NOTE);
+    const r = await app.answerQuestion(
+      "What did Acme report in Q3 2025?",
+      CFG,
+      { live: false, fetchImpl: mockFetch({ answer: "Acme reported $2.3B in Q3 2025 after acquiring Zorbex." }) }
+    );
+    if (r.source !== "api" || r.grounded !== true) {
+      return JSON.stringify({ source: r.source, grounded: r.grounded, text: r.text });
+    }
+    if (r.weak !== true) return "not flagged weak";
+    if (!r.unknownNames || !r.unknownNames.some(n => n.toLowerCase() === "zorbex")) {
+      return "names: " + JSON.stringify(r.unknownNames);
+    }
+    return true;
+  }],
+
+  ["a name from the note is not flagged", async () => {
+    useNotes(NOTE);
+    const r = await app.answerQuestion(
+      "What did the CFO say?",
+      CFG,
+      { live: false, fetchImpl: mockFetch({ answer: "Acme's CFO said the renewal pipeline is strong." }) }
+    );
+    if (r.source !== "api") return "source: " + r.source;
+    return r.weak === false && r.unknownNames && r.unknownNames.length === 0
       ? true
-      : JSON.stringify({ source: r.source, grounded: r.grounded, text: r.text });
+      : JSON.stringify({ weak: r.weak, names: r.unknownNames });
   }],
 
   ["a fetched live fact is allowed as a source", async () => {

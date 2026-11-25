@@ -1,9 +1,10 @@
 # Notes Q&A
 
 Ask questions about meeting notes you saved in the browser. The model sees the
-notes and an optional live Wikipedia fact, and every figure it returns is
-checked against those sources. A figure that is not in the notes or the live
-fact is rejected before it reaches you.
+notes and an optional live Wikipedia fact, and every figure and date it returns
+is checked against those sources. A figure or date that is not in the notes or
+the live fact is rejected before it reaches you; a name that is not there is
+listed under the answer.
 
 The claim is in [CLAIM.md](CLAIM.md). `node verify.mjs` proves it offline.
 
@@ -80,15 +81,22 @@ allowed to do this; `429` means wait for `Retry-After`; `503` with
    is shown with a `one side only` warning.
 5. The answer is displayed with its source:
    - `UnoRouter` — the model answered.
-   - `local reader` — no key, an API error, or a blocked figure.
-   - `unsupported figure blocked` — the model cited a number absent from the
-     notes/live fact, so its answer was replaced.
-6. Every answer shows how many notes were read, the evidence sentences, and the
-   live fact, if one was fetched.
+   - `local reader` — no key, an API error, or a blocked figure/date.
+   - `unsupported figure blocked` / `unsupported date blocked` — the model
+     cited a number or date absent from the notes/live fact, so its answer was
+     replaced with the note sentence.
+   - `names not in notes: …` — the answer is kept, but a capitalised name was
+     not found in the sources (amber border). It may still be right; the app
+     only says what it cannot confirm.
+6. Every answer shows how many notes were read, the evidence sentences, the
+   live fact if one was fetched, and any name it could not confirm.
 
 The prompt restricts the model to the notes and the live fact, but the prompt
-is not the guarantee. The guarantee is the number gate: `unsupportedNumbers()`
-extracts every number from the answer and requires it to exist in the sources.
+is not the guarantee. The guarantee is the check on the text:
+`unsupportedNumbers()` and `unsupportedDates()` extract every figure and date
+phrase and require each to exist in the sources. `unknownNames()` does the same
+for capitalised names, but only warns: a name can be correct general knowledge
+the notes never mention.
 
 ## Verify
 
@@ -104,6 +112,10 @@ Wikipedia call and the chat call, and checks:
   the API key;
 - `$9.9B` is rejected and replaced with `$2.3B`;
 - a grounded `$2.3B` answer passes;
+- an invented date (`March 2025` against a note saying `Q3 2025`) is blocked
+  even though its digits appear in the note;
+- a name absent from the notes is flagged weak, not blocked;
+- a name from the note is not flagged;
 - a number that exists only in the fetched live fact is allowed;
 - a two-sided note answers with both sides;
 - an unrelated question abstains without calling the model;
@@ -113,9 +125,17 @@ No network and no API key are needed for the gate.
 
 ## Limits (read this before trusting it)
 
-- **Figures only.** The gate checks numbers. The model can still invent a name
-  or a relationship that has no number in it. Do not treat this as full
-  fact-checking.
+- **Not full fact-checking.** Figures and dates are blocked; names are only
+  warned about. A relationship ("X owns Y"), a quotation, or a paraphrase can
+  still be wrong with no figure, date, or new name in it.
+- **Names are heuristic.** Only capitalised words after the first word of each
+  sentence are checked: the first word is skipped because every sentence starts
+  with a capital, so a name invented at the start of a sentence is missed.
+  Matching is by word, so `Corp` in the notes does not cover `Corporation`.
+- **Dates by words, not calendar.** A date passes when all of its words and
+  numbers appear in the sources, so `12 March 2026` and `March 12, 2026` agree.
+  A month name that is also an ordinary word (`may`) can hide an invented
+  month.
 - **Literal figures.** A correct figure rewritten in another form
   (`$2.3B` → `2,300,000,000`) is rejected, because the gate compares numeric
   values, not units or formatting. The prompt asks the model to copy figures

@@ -48,6 +48,7 @@
     border-left:3px solid #9a948a;border-radius:2px;white-space:pre-wrap;overflow-wrap:anywhere}
   .answer.api{border-left-color:#2f6f5e}
   .answer.local{border-left-color:#8a6d3b}
+  .answer.weak{border-left-color:#b07d20}
   .answer.warn{border-left-color:#a33a2b;background:#fdf6f4}
   .meta{margin:6px 0 0;font:400 10px/1.5 ui-monospace,monospace;color:#8a857b;overflow-wrap:anywhere}
   .toggle{display:flex;align-items:center;gap:6px;font:400 10px/1 ui-monospace,monospace;
@@ -66,7 +67,7 @@
 <main>
   <p class="eyebrow">meeting notes / grounded answers</p>
   <h1>Ask your notes.</h1>
-  <p id="claim">The answer may use the model, but every figure it cites must already exist in a saved note or a fetched live fact. Invented figures are replaced.</p>
+  <p id="claim">The model may write the answer, but every figure and date it cites must already exist in a saved note or a fetched live fact. Invented figures and dates are replaced; names that are not in the notes are flagged.</p>
 
   <div class="grid">
     <section class="panel">
@@ -112,8 +113,8 @@
   <footer>
     Free models allow about one request per minute. The local reader works with no key, so the page
     never depends on the API to answer. A sentence must match half the question to count as evidence,
-    and a two-sided note is answered with both sides. Grounding checks figures only; names are the
-    model's job.
+    and a two-sided note is answered with both sides. Figures and dates must come from the notes or the
+    live fact; a name that is not in either is listed under the answer.
   </footer>
 </main>
 
@@ -245,6 +246,44 @@
     return [...new Set(numbersIn(answer))].filter(n => !allowed.has(n));
   }
 
+  const MONTHS = "January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec";
+  const DATE = new RegExp(
+    String.raw`\b(?:\d{4}-\d{2}-\d{2}|(?:${MONTHS})\.?\s+\d{1,2},?\s+\d{4}|(?:${MONTHS})\.?\s+\d{4}|\d{1,2}\s+(?:${MONTHS})\.?,?\s+\d{4}|Q[1-4],?\s+\d{4})\b`,
+    "gi"
+  );
+  const flat = text => String(text).toLowerCase().replace(/,/g, "").replace(/\s+/g, " ");
+
+  function datesIn(text) {
+    return [...new Set((String(text).match(DATE) || []).map(flat))];
+  }
+
+  // A date phrase the sources do not contain. The digits alone can all match
+  // ("March 2025" vs "Q3 2025"), so the month or quarter is what this adds.
+  // Compared word by word, so "12 March 2026" and "March 12, 2026" both pass.
+  function unsupportedDates(answer, sources) {
+    const known = new Set(tokens(sources));
+    return datesIn(answer).filter(d => tokens(d).some(t => !known.has(t)));
+  }
+
+  // Capitalised words the sources do not contain. The first word of each
+  // sentence is skipped: it is capitalised for grammar, not because it is a
+  // name, and flagging it would fire on every answer that opens with "Based…".
+  const CAP_WORD = /[A-Z][A-Za-z0-9&.'-]*/g;
+
+  function unknownNames(answer, sources) {
+    const known = new Set(tokens(sources));
+    const unknown = [];
+    for (const sentence of sentencesOf(answer)) {
+      for (const word of (sentence.match(CAP_WORD) || []).slice(1)) {
+        const key = tokens(word)[0];
+        if (!key || key.length < 2 || /^q[1-4]$/.test(key) || STOP.has(key) || known.has(key)) continue;
+        const shown = word.replace(/\.+$/, "");
+        if (!unknown.some(u => u.toLowerCase() === shown.toLowerCase())) unknown.push(shown);
+      }
+    }
+    return unknown;
+  }
+
   function extractEntity(question) {
     const matches = String(question).match(/\b[A-Z][A-Za-z0-9&.'-]*(?:\s+[A-Z][A-Za-z0-9&.'-]*)*/g) || [];
     for (const raw of matches) {
@@ -358,6 +397,7 @@
 
     const result = {
       source: "local", grounded: true, replaced: false, incomplete: false,
+      weak: false, unknownNames: [],
       live: liveFact, sentences: local.sentences, note: local.note, ms: 0,
       hits: hits.length, notesRead: new Set(hits.map(h => h.note.id)).size, notesTotal: notes.length
     };
@@ -371,11 +411,15 @@
 
     try {
       const out = await askModel(hits, q, liveText, config, fetchImpl);
-      const bad = unsupportedNumbers(out.text, notesText(notes) + "\n" + liveText);
-      if (bad.length) {
-        return { ...result, text: local.text, grounded: false, replaced: true, bad, raw: out.text, ms: out.ms };
+      const sources = notesText(notes) + "\n" + liveText;
+      const bad = unsupportedNumbers(out.text, sources);
+      const badDates = unsupportedDates(out.text, sources);
+      if (bad.length || badDates.length) {
+        return { ...result, text: local.text, grounded: false, replaced: true, bad, badDates, raw: out.text, ms: out.ms };
       }
-      return { ...result, source: "api", text: out.text, ms: out.ms, incomplete: oneSided(out.text, hits, q) };
+      const unknown = unknownNames(out.text, sources);
+      return { ...result, source: "api", text: out.text, ms: out.ms,
+        incomplete: oneSided(out.text, hits, q), weak: unknown.length > 0, unknownNames: unknown };
     } catch (e) {
       return { ...result, text: local.text, error: e.message };
     }
@@ -402,13 +446,18 @@
 
   function renderAnswer(res) {
     el("answer").textContent = res.text;
-    el("answer").className = "answer " + (res.source === "api" ? "api" : "local") + (res.grounded ? "" : " warn");
+    el("answer").className = "answer " + (res.source === "api" ? "api" : "local")
+      + (res.grounded ? "" : " warn")
+      + (res.weak ? " weak" : "");
 
     const bits = [res.source === "api" ? "UnoRouter" : "local reader"];
     if (res.notesTotal) {
       bits.push("read " + res.notesRead + " of " + res.notesTotal + " note" + (res.notesTotal === 1 ? "" : "s"));
     }
-    bits.push(res.grounded ? "figures grounded" : "unsupported figure blocked");
+    bits.push(res.grounded
+      ? "figures + dates grounded"
+      : res.badDates && res.badDates.length ? "unsupported date blocked" : "unsupported figure blocked");
+    if (res.weak) bits.push("names not in notes: " + res.unknownNames.join(", "));
     if (res.incomplete) bits.push("one side only");
     if (res.ms) bits.push(res.ms + " ms");
     if (res.error) bits.push("fallback: " + res.error);
@@ -483,7 +532,8 @@
   window.__app = {
     NOTES_KEY, CFG_KEY,
     addNote, clearNotes, getNotes: () => notes.map(n => ({ ...n })),
-    answerQuestion, buildMessages, localAnswer, retrieve, supported, unsupportedNumbers, extractEntity, lookupLive,
+    answerQuestion, buildMessages, localAnswer, retrieve, supported, unsupportedNumbers,
+    unsupportedDates, unknownNames, extractEntity, lookupLive,
     getNotesText: () => notesText(notes)
   };
 })();
