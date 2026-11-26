@@ -501,6 +501,22 @@ const CHECKS = [
     return answer.source === "api"
       ? true
       : "a keyless server config did not reach the model: " + answer.source + " " + (answer.error || "");
+  }],
+
+  ["the config toggle can force this browser's config and reveal its fields", async () => {
+    const page3 = boot();
+    const a = page3.globals.__app;
+    await a.probeServer(async () => ({
+      ok: true,
+      json: async () => ({ key: true, model: "pinned-model" })
+    }));
+    page3.el("cfg-client").dispatch("change");
+    const config = a.readCfgFields();
+    if (config.serverSide) return "still using the server config";
+    if (config.baseUrl !== "http://localhost:8080/proxy") return "base url: " + config.baseUrl;
+    if (page3.el("row-key").hidden) return "the key field is still hidden";
+    if (page3.el("cfg-server").disabled) return "the server option was disabled";
+    return true;
   }]
 ];
 

@@ -20,14 +20,17 @@ node serve.mjs          # http://127.0.0.1:8080
 
 The key stays on the server. `serve.mjs` reads `.env` (gitignored) or the
 environment, injects the `Authorization` header, pins `UNOROUTER_MODEL`, and
-answers `GET /api/config` with `{ key: true, model }` — never the key. The page
-then hides the base URL, model and key fields and calls `/proxy` with no key at
-all.
+answers `GET /api/config` with `{ key: true, model }` — never the key. When it
+reports a key the page defaults to **server** config: the base URL, model and key
+fields are hidden and calls go to `/proxy` with no key at all.
 
-Prefer to type the key in the browser? Leave `UNOROUTER_API_KEY` empty, start the
-server, and open **UnoRouter config** in the page. The key is kept in
-`localStorage` and sent only to the local proxy; it is never written to this
-repo.
+The **Config source** toggle in **UnoRouter config** switches to **this browser**.
+Type a base URL, model, and key; the page sends them and ignores the server key.
+The values stay in `localStorage` and go only to the base URL you typed — the
+local proxy, another proxy, or a CORS-enabled OpenAI-compatible endpoint. Keep
+the default `http://localhost:8080/proxy` to send the key only to this machine.
+The **Debug** panel below the config shows the source, the key's location, the
+base URL and model in use, the note count, and the last answer.
 
 The server also keeps the free-tier limits from becoming a retry loop: a `429`
 from UnoRouter starts a cooldown for that model and later requests get a local
@@ -155,7 +158,8 @@ Wikipedia call and the chat call, and checks:
 - an upstream `429` becomes a local cooldown with one upstream call, not two;
 - an identical request is served from cache;
 - `.env` is not served by the static file route;
-- the page hides its key fields and sends no key when the server has one.
+- the page hides its key fields and sends no key when the server has one;
+- the config toggle forces this browser's fields back on and ignores the server key.
 
 No network and no API key are needed for the gate.
 

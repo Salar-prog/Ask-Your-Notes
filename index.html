@@ -21,6 +21,7 @@
     --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
   }
   *{box-sizing:border-box}
+  [hidden]{display:none !important}
   html{background:var(--paper)}
   body{
     margin:0;color:var(--ink);background:var(--paper);
@@ -119,7 +120,7 @@
   }
   .config summary::-webkit-details-marker{display:none}
   .config summary::before{content:"+ ";color:var(--green)}
-  details[open] > summary::before{content:"– "}
+  .config[open] > summary::before{content:"– "}
   .config p{max-width:76ch;font:400 12px/1.7 var(--sans);color:var(--ink-soft)}
   .config label{
     display:block;margin-top:12px;
@@ -127,7 +128,37 @@
   }
   .config input{margin-top:6px}
   .config .meta{display:inline-block;margin:0}
+  .config-mode{
+    display:flex;align-items:center;justify-content:space-between;gap:12px;
+    margin-top:14px;padding-top:12px;border-top:1px solid var(--rule);
+  }
+  .config-mode .config-label{
+    font:500 9px/1.4 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
+  }
+  .config-mode .modes{display:flex;gap:14px}
+  .config-mode .toggle{display:flex;margin:0;font-size:9px;cursor:pointer}
+  .config-mode input{margin:0}
   code{font:400 11px/1.4 var(--mono);background:var(--paper-deep);padding:1px 4px}
+
+  .debug{margin-top:22px;border-top:1px solid var(--rule);padding-top:12px}
+  .debug summary{
+    display:inline-flex;align-items:center;gap:8px;list-style:none;cursor:pointer;
+    font:500 10px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--muted);
+  }
+  .debug summary::-webkit-details-marker{display:none}
+  .debug summary svg{
+    width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.5;
+    stroke-linecap:round;stroke-linejoin:round;
+  }
+  .debug summary:hover,.debug[open] summary{color:var(--green)}
+  .debug dl{
+    display:grid;grid-template-columns:max-content minmax(0,1fr);gap:7px 18px;
+    margin:14px 0 0;max-width:76ch;
+  }
+  .debug dt{
+    font:500 9px/1.6 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
+  }
+  .debug dd{margin:0;font:400 11px/1.6 var(--mono);color:var(--ink-soft);overflow-wrap:anywhere}
 
   footer{
     margin-top:36px;border-top:3px double var(--rule);padding-top:14px;
@@ -191,20 +222,36 @@
   <details class="config">
     <summary>UnoRouter config</summary>
     <p>
-      The key stays in this browser and is sent only to the local proxy, unless
-      <code>serve.mjs</code> holds <code>UNOROUTER_API_KEY</code> — then the page
-      never sees it and the fields below are hidden. Run
+      <strong>Server</strong> uses the key <code>serve.mjs</code> holds; the browser
+      never sees it and the fields below are hidden. <strong>This browser</strong>
+      sends the base URL, model, and key you type here — point it at the local proxy
+      or any OpenAI-compatible endpoint that allows this origin. Run
       <code>UNOROUTER_BASE_URL=https://api.unorouter.com/v1 node serve.mjs</code>,
       open <code>http://localhost:8080</code>, then ask. No key? The local reader
       answers from the notes.
     </p>
-    <label id="row-base">Base URL <input id="cfg-base" type="text" autocomplete="off" spellcheck="false"></label>
-    <label id="row-model">Model <input id="cfg-model" type="text" autocomplete="off" spellcheck="false"></label>
+    <div class="config-mode">
+      <span class="config-label" id="config-source-label">Config source</span>
+      <div class="modes" role="radiogroup" aria-labelledby="config-source-label">
+        <label class="toggle"><input type="radio" name="cfg-source" id="cfg-server" value="server"> server</label>
+        <label class="toggle"><input type="radio" name="cfg-source" id="cfg-client" value="client"> this browser</label>
+      </div>
+    </div>
+    <label id="row-base">Base URL <input id="cfg-base" type="text" autocomplete="off" spellcheck="false" placeholder="http://localhost:8080/proxy"></label>
+    <label id="row-model">Model <input id="cfg-model" type="text" autocomplete="off" spellcheck="false" placeholder="gpt-oss-120b:free"></label>
     <label id="row-key">API key <input id="cfg-key" type="password" autocomplete="off"></label>
     <div class="row">
       <button id="cfg-save" class="ghost">Save config</button>
       <span id="status" class="meta"></span>
     </div>
+  </details>
+
+  <details class="debug">
+    <summary>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+      Debug
+    </summary>
+    <dl id="debug-list"></dl>
   </details>
 
   <footer>
@@ -223,6 +270,7 @@
   const NOTES_KEY = "notes-qa.notes.v1";
   const CFG_KEY = "notes-qa.cfg.v1";
   const LIVE_KEY = "notes-qa.live.v1";
+  const MODE_KEY = "notes-qa.mode.v1";
   const DEFAULT_CFG = { baseUrl: "http://localhost:8080/proxy", model: "gpt-oss-120b:free", key: "" };
   const SEED = "Acme Corp reported $2.3B revenue in Q3 2025, up 18% year over year. Their CFO said the renewal pipeline is strong. We agreed to send the security questionnaire by Friday.";
 
@@ -285,6 +333,10 @@
   // Set when serve.mjs reports a server-side key. Then the page sends no key and
   // no base URL of its own: both are the server's.
   let serverCfg = null;
+  // "server" ignores every field below; "client" is the only mode that sends them.
+  const modePref = localStorage.getItem(MODE_KEY);
+  let configMode = "client";
+  let lastAnswer = null;
 
   async function probeServer(fetchImpl = fetch) {
     try {
@@ -293,11 +345,8 @@
       const info = await res.json();
       if (!info || !info.key) return null;
       serverCfg = info;
-      el("row-base").hidden = true;
-      el("row-model").hidden = true;
-      el("row-key").hidden = true;
-      el("status").textContent = "Key held by the server"
-        + (info.model ? "; model pinned to " + info.model : "") + ".";
+      if (modePref !== "client") configMode = "server";
+      renderCfgMode();
       return info;
     } catch {
       return null; // not served by serve.mjs; the config fields are the fallback
@@ -687,7 +736,7 @@
   function renderNotes() {
     const host = el("notes");
     host.innerHTML = "";
-    if (!notes.length) { host.textContent = "No notes yet."; return; }
+    if (!notes.length) { host.textContent = "No notes yet."; renderDebug(); return; }
     for (const n of notes) {
       const row = document.createElement("article");
       row.className = "note";
@@ -702,6 +751,7 @@
       row.appendChild(p);
       host.appendChild(row);
     }
+    renderDebug();
   }
 
   const clip = (text, n = 90) => {
@@ -744,10 +794,12 @@
     el("live-fact").textContent = res.live
       ? "Live fact (" + res.live.title + "): " + res.live.extract
       : "";
+    lastAnswer = res;
+    renderDebug();
   }
 
   function readCfgFields() {
-    if (serverCfg) {
+    if (configMode === "server" && serverCfg) {
       return {
         baseUrl: "/proxy",
         model: serverCfg.model || el("cfg-model").value.trim() || DEFAULT_CFG.model,
@@ -762,11 +814,71 @@
     };
   }
 
+  function renderCfgMode() {
+    const server = configMode === "server" && !!serverCfg;
+    el("cfg-server").disabled = !serverCfg;
+    el("cfg-server").checked = server;
+    el("cfg-client").checked = !server;
+    for (const id of ["row-base", "row-model", "row-key"]) el(id).hidden = server;
+    el("cfg-save").hidden = server;
+    el("status").textContent = server
+      ? "Using the server key" + (serverCfg.model ? "; model pinned to " + serverCfg.model : "") + "."
+      : serverCfg
+        ? "Using this browser's config; the server key is ignored."
+        : "Using this browser's config.";
+    renderDebug();
+  }
+
+  function debugRows() {
+    const c = readCfgFields();
+    const rows = [
+      ["config source", configMode === "server" ? "server key" : "this browser"],
+      ["server key", serverCfg ? "present" : "absent"],
+      ["base url", c.baseUrl || "—"],
+      ["model", c.model || "—"],
+      ["key", c.serverSide ? "held by server" : c.key ? "held by browser" : "none"],
+      ["notes", notes.length + " stored"],
+      ["live fact", liveEnabled ? "on" : "off"]
+    ];
+    if (!lastAnswer) {
+      rows.push(["last answer", "none yet"]);
+    } else {
+      rows.push([
+        "last answer",
+        (lastAnswer.source === "api" ? "UnoRouter" : "local reader")
+          + (lastAnswer.kind === "summary" ? " · summary" : "")
+          + (lastAnswer.grounded ? " · grounded" : " · blocked")
+          + (lastAnswer.weak ? " · names flagged" : "")
+          + (lastAnswer.ms ? " · " + lastAnswer.ms + " ms" : "")
+          + (lastAnswer.error ? " · " + clip(lastAnswer.error, 70) : "")
+      ]);
+      if (lastAnswer.notesTotal) {
+        rows.push(["evidence", "read " + lastAnswer.notesRead + " of " + lastAnswer.notesTotal]);
+      }
+    }
+    return rows;
+  }
+
+  function renderDebug() {
+    const host = el("debug-list");
+    if (!host) return;
+    host.innerHTML = "";
+    for (const [label, value] of debugRows()) {
+      const dt = document.createElement("dt");
+      dt.textContent = label;
+      const dd = document.createElement("dd");
+      dd.textContent = value;
+      host.appendChild(dt);
+      host.appendChild(dd);
+    }
+  }
+
   function renderCfg() {
     el("cfg-base").value = cfg.baseUrl || DEFAULT_CFG.baseUrl;
     el("cfg-model").value = cfg.model || "";
     el("cfg-key").value = cfg.key || "";
     el("live-enabled").checked = liveEnabled;
+    renderCfgMode();
   }
 
   el("save-note").addEventListener("click", () => {
@@ -791,10 +903,23 @@
 
   el("cfg-save").addEventListener("click", () => {
     cfg = readCfgFields();
-    if (!serverCfg) localStorage.setItem(CFG_KEY, JSON.stringify(cfg));
+    if (configMode === "client") localStorage.setItem(CFG_KEY, JSON.stringify(cfg));
     liveEnabled = el("live-enabled").checked;
     localStorage.setItem(LIVE_KEY, liveEnabled ? "1" : "0");
-    el("status").textContent = serverCfg ? "Key held by the server." : "Saved.";
+    renderCfgMode();
+  });
+
+  el("cfg-server").addEventListener("change", () => {
+    if (!serverCfg) return;
+    configMode = "server";
+    localStorage.setItem(MODE_KEY, configMode);
+    renderCfgMode();
+  });
+
+  el("cfg-client").addEventListener("change", () => {
+    configMode = "client";
+    localStorage.setItem(MODE_KEY, configMode);
+    renderCfgMode();
   });
 
   el("live-enabled").addEventListener("change", () => {
