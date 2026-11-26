@@ -553,7 +553,13 @@
     const text = payload && payload.choices && payload.choices[0] && payload.choices[0].message
       ? String(payload.choices[0].message.content || "").trim()
       : "";
-    if (!text) throw new Error("empty response");
+    if (!text) {
+      const bits = [];
+      if (payload && payload.model) bits.push("model: " + payload.model);
+      const choice = payload && payload.choices && payload.choices[0];
+      if (choice && choice.finish_reason) bits.push("finish_reason: " + choice.finish_reason);
+      throw new Error("empty response" + (bits.length ? " (" + bits.join(", ") + ")" : ""));
+    }
     return { text, ms: Date.now() - t0 };
   }
 
@@ -856,7 +862,7 @@
           + (lastAnswer.grounded ? " · grounded" : " · blocked")
           + (lastAnswer.weak ? " · names flagged" : "")
           + (lastAnswer.ms ? " · " + lastAnswer.ms + " ms" : "")
-          + (lastAnswer.error ? " · " + clip(lastAnswer.error, 70) : "")
+          + (lastAnswer.error ? " · " + clip(lastAnswer.error, 120) : "")
       ]);
       if (lastAnswer.notesTotal) {
         rows.push(["evidence", "read " + lastAnswer.notesRead + " of " + lastAnswer.notesTotal]);

@@ -158,6 +158,24 @@ const CHECKS = [
     return true;
   }],
 
+  ["an empty 200 response names the finish reason", async () => {
+    useNotes(NOTE);
+    const r = await app.answerQuestion("What did Acme report in Q3 2025?", CFG, {
+      live: false,
+      fetchImpl: async () => ({
+        ok: true,
+        json: async () => ({
+          model: "some/free-model",
+          choices: [{ message: { content: "" }, finish_reason: "length" }]
+        })
+      })
+    });
+    if (r.source !== "local") return "source: " + r.source;
+    if (!r.error || !r.error.includes("finish_reason: length")) return "error: " + r.error;
+    if (!r.error.includes("some/free-model")) return "model lost: " + r.error;
+    return true;
+  }],
+
   ["a grounded model answer passes the gate", async () => {
     useNotes(NOTE);
     const cap = {};

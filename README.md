@@ -60,6 +60,13 @@ curl https://api.unorouter.com/v1/models \
 **Open `http://localhost:8080`, not the `index.html` file.** A page opened as
 `file://` cannot call the proxy, and Firefox logs a `file:///` security error.
 
+**`empty response (finish_reason: length)`** means the model returned `200` but
+spent the whole `max_tokens` budget on reasoning and had no text left. Reasoning
+tokens share the budget. Use a non-reasoning free model (for example
+`google/gemma-4-31b-it:free`) or one with a larger budget. `openrouter/free`
+picks a free model at random, and most current free models reason by default, so
+it is the common way to hit this.
+
 **A `403` from `/proxy/chat/completions` is UnoRouter's status, not the local
 server's.** Restart `serve.mjs` after updating it and read the terminal; the
 proxy prints the upstream body. The usual causes:
