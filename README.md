@@ -6,6 +6,10 @@ fetched Wikipedia fact) first. An invented figure or date is replaced with the
 note's own sentence; a name that is not in the sources is flagged under the
 answer.
 
+![First load: notes on the left, the question on the right, the answer below it](docs/screenshot.png)
+
+[![verify](https://github.com/Salar-prog/Ask-Your-Notes/actions/workflows/verify.yml/badge.svg)](https://github.com/Salar-prog/Ask-Your-Notes/actions/workflows/verify.yml)
+
 The one-sentence claim is in [CLAIM.md](CLAIM.md). `node verify.mjs` proves it
 offline, with no key and no network.
 
@@ -172,6 +176,8 @@ Wikipedia call and the chat call, and checks:
 - an identical request is served from cache;
 - `.env` is not served by the static file route;
 - the page hides its key fields and sends no key when the server has one;
+- a rejected request shows the provider's own message, not just the status;
+- a `200` with no text names the model and `finish_reason`;
 - the config toggle forces this browser's fields back on and ignores the server key.
 
 No network and no API key are needed for the gate.
@@ -183,6 +189,27 @@ No network and no API key are needed for the gate.
 - `harness.mjs` — the stub DOM that lets Node run that script.
 - `serve.mjs` — static server, `/proxy`, server-side key, cache, cooldown.
 - `CLAIM.md` — the one sentence the gate proves.
+
+## Hosting
+
+`index.html` is static, but UnoRouter sends no CORS headers, so a browser cannot
+call it directly. `serve.mjs` exists for that one job: hold the key and add the
+proxy. A host that only serves files cannot demo the UnoRouter path.
+
+- **GitHub Pages** serves `index.html`, but `/api/config` and `/proxy` return
+  404, so the page stays in **this browser** mode. That is usable with a
+  CORS-enabled OpenAI-compatible endpoint (OpenRouter is one) and the local
+  reader. The server-held key and the UnoRouter call are not available.
+- **Netlify or Vercel free tier** can serve the page and run one function that
+  calls `createHandler` from `serve.mjs`, with `UNOROUTER_API_KEY` and
+  `UNOROUTER_MODEL` as environment variables. The cache and cooldown live in
+  that process's memory, so they reset when the instance does.
+
+Either free tier is enough. The app makes one request per minute by design,
+caches identical requests for 10 minutes, and ships a single small page. Vercel
+Hobby gives 300 s per function and 100 deploys a day. Netlify's free plan is 300
+credits a month and a production deploy costs 15 of them, so frequent pushes use
+it up first. No deploy config is committed yet.
 
 ## Limits (read this before trusting it)
 
