@@ -542,7 +542,13 @@
         messages
       })
     });
-    if (!res || !res.ok) throw new Error("HTTP " + (res ? res.status : "no response"));
+    if (!res || !res.ok) {
+      const err = res ? await res.json().catch(() => null) : null;
+      const detail = err && (typeof err.error === "string" ? err.error
+        : err.error && err.error.message ? err.error.message
+        : typeof err.message === "string" ? err.message : "");
+      throw new Error("HTTP " + (res ? res.status : "no response") + (detail ? ": " + detail : ""));
+    }
     const payload = await res.json();
     const text = payload && payload.choices && payload.choices[0] && payload.choices[0].message
       ? String(payload.choices[0].message.content || "").trim()
@@ -779,7 +785,7 @@
     if (res.weak) bits.push("names not in notes: " + res.unknownNames.join(", "));
     if (res.incomplete) bits.push("one side only");
     if (res.ms) bits.push(res.ms + " ms");
-    if (res.error) bits.push("fallback: " + res.error);
+    if (res.error) bits.push("fallback: " + clip(res.error, 140));
     el("answer-meta").textContent = bits.join(" · ");
 
     if (res.kind === "summary") {

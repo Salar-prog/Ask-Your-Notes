@@ -103,6 +103,8 @@ allowed to do this; `429` means wait for `Retry-After`; `503` with
 5. The answer is displayed with its source:
    - `UnoRouter` — the model answered.
    - `local reader` — no key, an API error, or a blocked figure/date.
+   - `fallback: HTTP 400: …` — the provider's own error message after a rejected
+     request, so a bad model ID or key is visible instead of a bare status.
    - `unsupported figure blocked` / `unsupported date blocked` — the model
      cited a number or date absent from the notes/live fact, so its answer was
      replaced with the note sentence.

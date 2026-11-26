@@ -142,6 +142,22 @@ const CHECKS = [
     return true;
   }],
 
+  ["a provider rejection surfaces its message, not just the status", async () => {
+    useNotes(NOTE);
+    const r = await app.answerQuestion("What did Acme report in Q3 2025?", CFG, {
+      live: false,
+      fetchImpl: async () => ({
+        ok: false,
+        status: 400,
+        json: async () => ({ error: { message: "model_not_found: gpt-oss-120b:free" } })
+      })
+    });
+    if (r.source !== "local") return "source: " + r.source;
+    if (!r.error || !r.error.includes("HTTP 400")) return "error: " + r.error;
+    if (!r.error.includes("model_not_found")) return "message lost: " + r.error;
+    return true;
+  }],
+
   ["a grounded model answer passes the gate", async () => {
     useNotes(NOTE);
     const cap = {};
