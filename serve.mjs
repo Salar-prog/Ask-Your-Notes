@@ -107,13 +107,15 @@ export function createHandler({ upstream = DEFAULT_UPSTREAM, key = API_KEY, mode
       if (!payload || !Array.isArray(payload.messages)) {
         return json(res, 400, { error: { message: "messages must be an array" } });
       }
-      if (model) payload.model = model;
-      payload.max_tokens = Math.min(Number(payload.max_tokens) || 220, MAX_TOKENS);
-
       const auth = req.headers.authorization || (key ? "Bearer " + key : "");
       if (!auth) {
         return json(res, 401, { error: { message: "no API key: set UNOROUTER_API_KEY or use the key field" } });
       }
+
+      // A client-supplied key names its own model. The pinned model only applies
+      // when the server is the one authenticating.
+      if (model && !req.headers.authorization) payload.model = model;
+      payload.max_tokens = Math.min(Number(payload.max_tokens) || 220, MAX_TOKENS);
 
       const cacheKey = JSON.stringify([payload.model, payload.messages]);
       const hit = cache.get(cacheKey);

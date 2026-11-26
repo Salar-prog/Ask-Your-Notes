@@ -19,16 +19,19 @@ node serve.mjs          # http://127.0.0.1:8080
 ```
 
 The key stays on the server. `serve.mjs` reads `.env` (gitignored) or the
-environment, injects the `Authorization` header, pins `UNOROUTER_MODEL`, and
-answers `GET /api/config` with `{ key: true, model }` — never the key. When it
-reports a key the page defaults to **server** config: the base URL, model and key
-fields are hidden and calls go to `/proxy` with no key at all.
+environment, injects the `Authorization` header, pins `UNOROUTER_MODEL` for those
+server-key requests, and answers `GET /api/config` with `{ key: true, model }` —
+never the key. When it reports a key the page defaults to **server** config: the
+base URL, model and key fields are hidden and calls go to `/proxy` with no key at
+all.
 
 The **Config source** toggle in **UnoRouter config** switches to **this browser**.
 Type a base URL, model, and key; the page sends them and ignores the server key.
-The values stay in `localStorage` and go only to the base URL you typed — the
-local proxy, another proxy, or a CORS-enabled OpenAI-compatible endpoint. Keep
-the default `http://localhost:8080/proxy` to send the key only to this machine.
+A request that carries its own key keeps its own model, even through `/proxy`; the
+server only pins the model when it supplies the key. The values stay in
+`localStorage` and go only to the base URL you typed — the local proxy, another
+proxy, or a CORS-enabled OpenAI-compatible endpoint. Keep the default
+`http://localhost:8080/proxy` to send the key only to this machine.
 The **Debug** panel below the config shows the source, the key's location, the
 base URL and model in use, the note count, and the last answer.
 
@@ -155,6 +158,7 @@ Wikipedia call and the chat call, and checks:
 - summarising with no transcript says so;
 - `/api/config` reports that a key exists without returning it;
 - the server key answers a keyless request and pins the model and token cap;
+- a client key through the proxy keeps its own model;
 - an upstream `429` becomes a local cooldown with one upstream call, not two;
 - an identical request is served from cache;
 - `.env` is not served by the static file route;

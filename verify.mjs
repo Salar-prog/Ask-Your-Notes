@@ -419,6 +419,36 @@ const CHECKS = [
     }
   }],
 
+  ["a client key keeps its own model through the proxy", async () => {
+    let seen = null;
+    const up = createServer((req, res) => {
+      const chunks = [];
+      req.on("data", c => chunks.push(c));
+      req.on("end", () => {
+        seen = { auth: req.headers.authorization, body: JSON.parse(Buffer.concat(chunks).toString()) };
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ choices: [{ message: { content: "ok" } }] }));
+      });
+    });
+    const upBase = await listen(up);
+    const srv = createApp({ upstream: upBase, key: "server-key", model: "pinned-model" });
+    const base = await listen(srv);
+    try {
+      const res = await post(base + "/proxy/chat/completions", {
+        model: "client-model",
+        messages: [{ role: "user", content: "hi" }]
+      }, { Authorization: "Bearer client-key" });
+      if (res.status !== 200) return "status: " + res.status;
+      if (!seen) return "the upstream was never called";
+      if (seen.auth !== "Bearer client-key") return "auth: " + seen.auth;
+      if (seen.body.model !== "client-model") return "model: " + seen.body.model;
+      return true;
+    } finally {
+      await close(srv);
+      await close(up);
+    }
+  }],
+
   ["an upstream 429 becomes a local cooldown, not a retry storm", async () => {
     let calls = 0;
     const up = createServer((req, res) => {
