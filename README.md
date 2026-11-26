@@ -215,8 +215,10 @@ No network and no API key are needed for the gate.
   not for a shared deployment.
 - **Wikipedia only.** The live lookup is one REST call for a capitalised entity
   in the question. It is not a web search and it does not fetch arbitrary URLs.
-- **No layout QA.** The verifier proves the script runs and the logic holds; it
-  does not prove the page looks right in a browser.
+- **Light visual QA only.** The verifier proves the script runs and the logic
+  holds; it does not prove the layout. This design was checked with headless
+  Chrome screenshots at 1440px and 390px, empty and answered. Firefox, Safari,
+  and a real keyboard or screen-reader pass were not run.
 
 `harness.mjs`, `serve.mjs`, and the page structure started from a small
 MIT-licensed static-page template.
